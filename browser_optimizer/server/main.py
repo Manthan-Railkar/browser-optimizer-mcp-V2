@@ -38,52 +38,92 @@ async def extract_context(url: str) -> Dict[str, Any]:
     """
     Navigate to a URL, extract HTML and accessibility tree, compress context to essential UI elements,
     classify the page, cache the result, and return the optimized context.
+
+    Cache strategy:
+      1. Exact hash hit  → return cached context directly.
+      2. Semantic hit     → extract fresh UI elements but reuse cached classification.
+      3. Full miss        → full extract → compress → classify pipeline.
     """
     try:
         # 1. Get page and check cache if enabled
         page = await manager.get_page()
-        
+
         # If page is already on this URL, we can grab its content directly to check cache.
         # Otherwise, navigate first.
         if page.url != url:
             page = await manager.navigate(url)
-            
+
         html = await page.content()
-        
-        # Check cache
+
+        # Check cache (exact hash first, then semantic similarity fallback)
         cached_context = semantic_cache.lookup(url, html)
+
         if cached_context:
-            metrics.record_cache_hit()
-            # Still run classifier to keep output structure consistent
-            classification = page_classifier.classify(cached_context)
-            return {
-                "url": url,
-                "title": cached_context.get("title", ""),
-                "ui": cached_context.get("ui", []),
-                "ax_tree": cached_context.get("ax_tree"),
-                "classification": classification,
-                "from_cache": True,
-                "compression_ratio_pct": cached_context.get("compression_ratio", 0)
-            }
-            
-        # Cache miss
+            is_semantic = cached_context.get("semantic_match", False)
+
+            if not is_semantic:
+                # ── Exact hash hit ────────────────────────────────
+                metrics.record_cache_hit()
+                classification = page_classifier.classify(cached_context)
+                return {
+                    "url": url,
+                    "title": cached_context.get("title", ""),
+                    "ui": cached_context.get("ui", []),
+                    "ax_tree": cached_context.get("ax_tree"),
+                    "classification": classification,
+                    "from_cache": True,
+                    "compression_ratio_pct": cached_context.get("compression_ratio", 0)
+                }
+            else:
+                # ── Semantic similarity hit ────────────────────────
+                # Structure is the same template, but text/IDs differ.
+                # Extract fresh UI elements, but reuse cached classification.
+                metrics.record_semantic_hit()
+                similarity_score = cached_context.get("similarity_score", 0)
+
+                extracted = await extractor.extract(page)
+                compressed = compressor.compress(extracted)
+
+                # Reuse the cached classification (same structural template)
+                classification = page_classifier.classify(cached_context)
+
+                # Store this new variant so future exact matches also hit
+                semantic_cache.store(url, html, compressed)
+
+                metrics.record_compression(
+                    extracted["raw_html_length"], compressed["compressed_length"]
+                )
+
+                return {
+                    "url": url,
+                    "title": compressed["title"],
+                    "ui": compressed["ui"],
+                    "ax_tree": compressed["ax_tree"],
+                    "classification": classification,
+                    "from_cache": False,
+                    "from_semantic_cache": True,
+                    "similarity_score": similarity_score,
+                    "compression_ratio_pct": compressed["compression_ratio"]
+                }
+
+        # ── Full cache miss ───────────────────────────────────
         metrics.record_cache_miss()
-        
+
         # 2. Extract context
         extracted = await extractor.extract(page)
-        
+
         # 3. Compress context
         compressed = compressor.compress(extracted)
-        
+
         # 4. Classify page
         classification = page_classifier.classify(compressed)
-        
-        # 5. Cache result
+
+        # 5. Cache result (with structural embedding)
         semantic_cache.store(url, html, compressed)
-        
+
         # 6. Record metrics
         metrics.record_compression(extracted["raw_html_length"], compressed["compressed_length"])
-        
+
         return {
             "url": url,
             "title": compressed["title"],

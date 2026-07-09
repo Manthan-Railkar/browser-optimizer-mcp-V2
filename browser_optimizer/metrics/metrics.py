@@ -9,6 +9,7 @@ class MetricsTracker:
         self.compressed_bytes = 0
         self.cache_hits = 0
         self.cache_misses = 0
+        self.semantic_hits = 0
         self.actions_executed = 0
         self.total_requests = 0
 
@@ -37,13 +38,19 @@ class MetricsTracker:
             self.actions_executed += 1
             logger.info("[METRICS] Action executed recorded")
 
+    def record_semantic_hit(self):
+        with self._lock:
+            self.semantic_hits += 1
+            logger.info("[METRICS] Semantic cache HIT recorded")
+
     def get_stats(self) -> Dict[str, Any]:
         with self._lock:
             total_saved = self.raw_html_bytes - self.compressed_bytes
             overall_ratio = round((1 - self.compressed_bytes / self.raw_html_bytes) * 100, 1) if self.raw_html_bytes > 0 else 0
             
-            cache_total = self.cache_hits + self.cache_misses
+            cache_total = self.cache_hits + self.cache_misses + self.semantic_hits
             hit_rate = round((self.cache_hits / cache_total) * 100, 1) if cache_total > 0 else 0
+            semantic_rate = round((self.semantic_hits / cache_total) * 100, 1) if cache_total > 0 else 0
 
             return {
                 "total_requests": self.total_requests,
@@ -52,8 +59,10 @@ class MetricsTracker:
                 "bytes_saved_total": total_saved,
                 "overall_compression_ratio_pct": overall_ratio,
                 "cache_hits": self.cache_hits,
+                "semantic_hits": self.semantic_hits,
                 "cache_misses": self.cache_misses,
                 "cache_hit_rate_pct": hit_rate,
+                "semantic_hit_rate_pct": semantic_rate,
                 "actions_executed": self.actions_executed
             }
 

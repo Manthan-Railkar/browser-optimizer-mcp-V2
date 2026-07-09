@@ -21,6 +21,7 @@ class Settings:
     CACHE_MAX_SIZE = int(os.getenv("CACHE_MAX_SIZE", "100"))
     REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
     BROWSER_TIMEOUT = int(os.getenv("BROWSER_TIMEOUT", "30000"))
+    SIMILARITY_THRESHOLD = float(os.getenv("SIMILARITY_THRESHOLD", "0.9"))
 
 
 # Instantiated settings for export
