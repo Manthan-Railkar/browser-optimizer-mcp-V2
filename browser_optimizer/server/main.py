@@ -1,5 +1,7 @@
 import asyncio
-from typing import Dict, Any, Optional
+import json
+import websockets
+from typing import Dict, Any, Optional, List
 from mcp.server.fastmcp import FastMCP
 
 from browser_optimizer.config.settings import settings
@@ -17,19 +19,104 @@ from browser_optimizer.metrics.metrics import metrics
 # Initialize FastMCP Server
 mcp = FastMCP("Browser Optimization MCP")
 
+# Push mode page watching state trackers
+ws_server = None
+watch_clients: Dict[str, List[Any]] = {}  # session_id -> list of websocket connections
+watch_tasks: Dict[str, asyncio.Task] = {}  # session_id -> asyncio.Task for polling loop
+
+
+async def websocket_handler(websocket):
+    """
+    Handle connection registration and lifecycle for incoming WebSocket clients.
+    Clients must register by sending a JSON payload: {"action": "register", "session_id": "..."}.
+    """
+    try:
+        # Expect first message to be a registration message
+        message = await websocket.recv()
+        data = json.loads(message)
+        if data.get("action") == "register":
+            session_id = data.get("session_id", "default")
+            if session_id not in watch_clients:
+                watch_clients[session_id] = []
+            watch_clients[session_id].append(websocket)
+            logger.info(f"WebSocket client registered for session: {session_id}")
+            
+            # Keep the socket open to detect client disconnection
+            async for _ in websocket:
+                pass
+    except Exception as e:
+        logger.warning(f"WebSocket client connection error: {e}")
+    finally:
+        # Remove from active connections
+        for sid, clients in list(watch_clients.items()):
+            if websocket in clients:
+                clients.remove(websocket)
+                logger.info(f"WebSocket client unregistered from session: {sid}")
+
+
+async def poll_page_diff(url: str, interval_seconds: float, session_id: str):
+    """
+    Periodically poll the page diff and broadcast changes to registered WebSocket clients.
+    """
+    logger.info(f"Starting page watch loop for '{url}' in session '{session_id}' (interval: {interval_seconds}s)")
+    try:
+        while True:
+            await asyncio.sleep(interval_seconds)
+            try:
+                # Calculate page diff
+                diff = await page_diff(url, session_id=session_id)
+                # If there are registered clients, push updates
+                clients = watch_clients.get(session_id, [])
+                if clients:
+                    payload = json.dumps(diff)
+                    dead_clients = []
+                    for client in clients:
+                        try:
+                            await client.send(payload)
+                        except Exception:
+                            dead_clients.append(client)
+                    # Clean up any dead connections
+                    for client in dead_clients:
+                        if client in clients:
+                            clients.remove(client)
+            except Exception as e:
+                logger.error(f"Error evaluating diff in page watch poller: {e}")
+    except asyncio.CancelledError:
+        logger.info(f"Page watch poller for '{url}' in session '{session_id}' was cancelled.")
+
 
 async def startup():
-    """Start browser session on server startup."""
+    """Start browser session and WebSocket server on server startup."""
+    global ws_server
     logger.info("Initializing Browser Optimizer MCP server...")
     logger.info(f"Headless Mode: {settings.HEADLESS}")
     logger.info(f"Log Level: {settings.LOG_LEVEL}")
     await manager.start()
+    
+    # Start WebSocket Server
+    logger.info("Starting WebSocket Server on port 8765...")
+    ws_server = await websockets.serve(websocket_handler, "localhost", 8765)
+    logger.info("WebSocket Server started on ws://localhost:8765")
     logger.info("Server startup complete. Browser ready.")
 
 
 async def shutdown():
-    """Clean up browser session on server shutdown."""
+    """Clean up browser session and active watchers on server shutdown."""
+    global ws_server, watch_tasks
     logger.info("Shutting down Browser Optimizer MCP server...")
+    
+    # Cancel all running watch tasks
+    for sid, task in list(watch_tasks.items()):
+        logger.info(f"Cancelling active watch poller for session '{sid}'...")
+        task.cancel()
+    watch_tasks.clear()
+    
+    # Close WebSocket Server
+    if ws_server:
+        ws_server.close()
+        await ws_server.wait_closed()
+        logger.info("WebSocket Server closed.")
+        
     await manager.stop()
     logger.info("Server shutdown complete.")
 
@@ -625,6 +712,39 @@ async def close_session(session_id: str) -> Dict[str, Any]:
     await manager.close_session(session_id)
     suspended_replays.pop(session_id, None)
     return {"success": True, "message": f"Session '{session_id}' has been closed."}
+
+
+@mcp.tool()
+async def watch_page(url: str, interval_seconds: int = 5, session_id: str = "default") -> Dict[str, Any]:
+    """
+    Start polling a page's visual changes at a regular interval and pushing them
+    automatically to connected WebSocket clients registered for that session.
+    """
+    global watch_tasks
+    # Cancel existing watch task for this session if any
+    if session_id in watch_tasks:
+        watch_tasks[session_id].cancel()
+        
+    # Start new task
+    watch_tasks[session_id] = asyncio.create_task(poll_page_diff(url, float(interval_seconds), session_id))
+    return {
+        "success": True,
+        "message": f"Started watching {url} in session '{session_id}' every {interval_seconds}s. Connect to ws://localhost:8765 and register with session_id '{session_id}' to receive live diff updates."
+    }
+
+
+@mcp.tool()
+async def stop_watch_page(session_id: str = "default") -> Dict[str, Any]:
+    """
+    Stop the background page watch poll for the specified session.
+    """
+    global watch_tasks
+    if session_id in watch_tasks:
+        watch_tasks[session_id].cancel()
+        watch_tasks.pop(session_id, None)
+        return {"success": True, "message": f"Stopped watching page in session '{session_id}'."}
+    return {"success": False, "message": f"No active page watch found for session '{session_id}'."}
+
 
 
 async def main():
