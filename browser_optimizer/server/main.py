@@ -15,6 +15,7 @@ from browser_optimizer.cache.db import macro_store
 from browser_optimizer.diff.diff import difference_engine
 from browser_optimizer.executor.executor import executor as action_executor
 from browser_optimizer.metrics.metrics import metrics
+from browser_optimizer.dashboard.server import start_dashboard_server
 
 # Initialize FastMCP Server
 mcp = FastMCP("Browser Optimization MCP")
@@ -749,6 +750,7 @@ async def stop_watch_page(session_id: str = "default") -> Dict[str, Any]:
 
 async def main():
     await startup()
+    start_dashboard_server()
     try:
         await mcp.run_stdio_async()
     finally:
