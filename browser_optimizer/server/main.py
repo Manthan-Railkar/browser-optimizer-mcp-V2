@@ -360,30 +360,54 @@ async def list_skills(page_type: Optional[str] = None) -> Dict[str, Any]:
     return {"success": True, "macros": macros}
 
 
+@mcp.tool()
+async def suggest_skill(page_type: str) -> Dict[str, Any]:
+    """
+    Fetch the highest confidence macro for a page_type and recommend a routing strategy.
+    Returns the macro and a routing_decision: 'DIRECT_REUSE', 'VERIFY_REUSE', or 'SKIP'.
+    """
+    macro = macro_store.get_best_macro(page_type)
+    if not macro:
+        return {"success": False, "routing_decision": "SKIP", "message": f"No skills found for {page_type}."}
+        
+    confidence = macro.get("confidence", 0.0)
+    
+    if confidence >= 0.7:
+        routing = "DIRECT_REUSE"
+        instruction = "You can blindly replay this macro."
+    elif confidence >= 0.3:
+        routing = "VERIFY_REUSE"
+        instruction = "Replay this macro, but pass expected_url or expected_page_type to verify it worked."
+    else:
+        routing = "SKIP"
+        instruction = "Confidence is too low. Please reason from scratch instead of reusing."
+        
+    return {
+        "success": True,
+        "routing_decision": routing,
+        "instruction": instruction,
+        "macro": macro
+    }
+
+
 # Global state for suspended macro replays
 suspended_replay: Optional[Dict[str, Any]] = None
 
 
 @mcp.tool()
-async def replay_skill(macro_id: int, parameters: Dict[str, str]) -> Dict[str, Any]:
+async def replay_skill(macro_id: int, parameters: Dict[str, str], expected_url: Optional[str] = None, expected_page_type: Optional[str] = None) -> Dict[str, Any]:
     """
     Replay a previously recorded macro.
     Inject parameters into the placeholders (e.g. {username}) before execution.
+    If expected_url or expected_page_type are provided, the system will verify the post-state and auto-decay on mismatch.
     """
-    global suspended_replay
     macro = macro_store.get_macro(macro_id)
     if not macro:
         return {"success": False, "message": f"Macro {macro_id} not found."}
         
-    confidence = macro.get("confidence", 0.8)
-    if confidence < 0.3:
-        return {
-            "success": False,
-            "message": f"Macro '{macro['name']}' confidence is too low ({confidence:.2f} < 0.3). Skipping macro replay. Please execute actions manually."
-        }
-        
     sequence = macro["sequence"]
-    logger.info(f"Replaying macro '{macro['name']}' with confidence {confidence:.2f} and params {parameters}")
+    
+    logger.info(f"Replaying macro '{macro['name']}' with params {parameters}")
     
     page = await manager.get_page()
     
@@ -391,11 +415,9 @@ async def replay_skill(macro_id: int, parameters: Dict[str, str]) -> Dict[str, A
     was_recording = action_executor.recording
     action_executor.recording = False
     
-    verify_steps = 0.3 <= confidence < 0.7
-    
     success_count = 0
     try:
-        for i, step in enumerate(sequence):
+        for step in sequence:
             action = step["action"]
             selector = step["selector"]
             value = step.get("value")
@@ -409,12 +431,6 @@ async def replay_skill(macro_id: int, parameters: Dict[str, str]) -> Dict[str, A
             
             result = await action_executor.execute(page, action, selector, value)
             if not result.get("success"):
-                # Suspend macro replay
-                suspended_replay = {
-                    "macro_id": macro_id,
-                    "next_step_index": i + 1,
-                    "parameters": parameters
-                }
                 macro_store.update_confidence(macro_id, success=False)
                 return {
                     "success": False,
@@ -435,6 +451,44 @@ async def replay_skill(macro_id: int, parameters: Dict[str, str]) -> Dict[str, A
                     pass
             success_count += 1
             
+        # Optional post-state verification
+        if expected_url or expected_page_type:
+            # Wait briefly for network to settle after final action
+            try:
+                await page.wait_for_load_state("networkidle", timeout=3000)
+            except:
+                pass
+                
+            current_url = page.url
+            if expected_url and not current_url.startswith(expected_url):
+                macro_store.update_confidence(macro_id, success=False)
+                return {
+                    "success": False, 
+                    "message": f"Verification failed: Expected URL starting with {expected_url}, but got {current_url}",
+                    "failure_context": {
+                        "failed_step_index": success_count,
+                        "reason": "URL_MISMATCH",
+                        "current_url": current_url
+                    }
+                }
+                
+            if expected_page_type:
+                # Classify the new page to verify
+                context = await extract_context(current_url)
+                current_page_type = context.get("classification", {}).get("page_type")
+                if current_page_type != expected_page_type:
+                    macro_store.update_confidence(macro_id, success=False)
+                    return {
+                        "success": False, 
+                        "message": f"Verification failed: Expected page type {expected_page_type}, but got {current_page_type}",
+                        "failure_context": {
+                            "failed_step_index": success_count,
+                            "reason": "PAGE_TYPE_MISMATCH",
+                            "current_url": current_url,
+                            "current_page_type": current_page_type
+                        }
+                    }
+
         macro_store.update_confidence(macro_id, success=True)
         if suspended_replay and suspended_replay.get("macro_id") == macro_id:
             suspended_replay = None

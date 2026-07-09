@@ -228,6 +228,26 @@ class MacroStore:
                 }
         return None
 
+    def get_best_macro(self, page_type: str) -> Optional[dict]:
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                "SELECT id, name, page_type, sequence, confidence, success_count, fail_count "
+                "FROM macros WHERE page_type = ? ORDER BY confidence DESC, success_count DESC LIMIT 1", 
+                (page_type,)
+            )
+            row = cursor.fetchone()
+            if row:
+                return {
+                    "id": row[0],
+                    "name": row[1],
+                    "page_type": row[2],
+                    "sequence": json.loads(row[3]),
+                    "confidence": row[4],
+                    "success_count": row[5],
+                    "fail_count": row[6]
+                }
+        return None
+
     def update_confidence(self, macro_id: int, success: bool):
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute("SELECT confidence, success_count, fail_count FROM macros WHERE id = ?", (macro_id,))
