@@ -5,10 +5,10 @@ Fingerprints HTML structure using xxhash and caches compressed context to skip r
 
 import time
 import xxhash
-from cachetools import TTLCache
 from typing import Dict, Any, Optional
 from browser_optimizer.config.settings import settings
 from browser_optimizer.utils.logger import logger
+from browser_optimizer.cache.db import SQLiteCache
 
 class SemanticCache:
     """
@@ -22,7 +22,7 @@ class SemanticCache:
         self.ttl = settings.CACHE_TTL if ttl is None else ttl
         self.max_size = settings.CACHE_MAX_SIZE if max_size is None else max_size
         
-        self._cache = TTLCache(maxsize=self.max_size, ttl=self.ttl)
+        self._cache = SQLiteCache(ttl=self.ttl)
         # Maps URL to the last page hash to check for changes
         self._url_to_hash: Dict[str, str] = {}
         logger.info(f"Semantic Cache initialized: Enabled={self.enabled}, TTL={self.ttl}s, MaxSize={self.max_size}")
