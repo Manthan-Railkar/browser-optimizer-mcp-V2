@@ -901,6 +901,49 @@ async def get_session_replay(session_id: str = "default") -> Dict[str, Any]:
     return {"success": True, "session_id": session_id, "logs": logs}
 
 
+@mcp.tool(name="list_tools")
+async def mcp_list_tools() -> Dict[str, Any]:
+    """
+    Get a lightweight list of all available browser optimization tools with names and one-line descriptions.
+    """
+    all_tools = await original_list_tools()
+    lightweight = []
+    for t in all_tools:
+        if t.name not in ["list_tools", "get_tool_schema"]:
+            lightweight.append({
+                "name": t.name,
+                "description": t.description
+            })
+    return {"tools": lightweight}
+
+
+@mcp.tool(name="get_tool_schema")
+async def mcp_get_tool_schema(tool_name: str) -> Dict[str, Any]:
+    """
+    Retrieve the full input parameters schema for a specific tool by name.
+    """
+    try:
+        tool_obj = mcp._tool_manager.get_tool(tool_name)
+        return {
+            "success": True,
+            "tool_name": tool_name,
+            "description": tool_obj.description,
+            "input_schema": tool_obj.parameters
+        }
+    except Exception as e:
+        return {"success": False, "error": f"Tool '{tool_name}' not found: {str(e)}"}
+
+
+# Override list_tools to only return meta-tools in the initial handshake
+original_list_tools = mcp.list_tools
+
+async def new_list_tools():
+    all_tools = await original_list_tools()
+    return [t for t in all_tools if t.name in ["list_tools", "get_tool_schema"]]
+
+mcp.list_tools = new_list_tools
+
+
 
 
 async def main():
