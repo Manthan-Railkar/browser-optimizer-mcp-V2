@@ -7,7 +7,7 @@ services:
       dockerfile: docker/Dockerfile
     container_name: browser_optimizer_mcp
     volumes:
-      - ../app:/app/app
+      - ../browser_optimizer:/app/browser_optimizer
       - ../.env:/app/.env
     restart: unless-stopped
     stdin_open: true

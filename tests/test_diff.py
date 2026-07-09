@@ -1,4 +1,4 @@
-from app.diff.diff import difference_engine
+from browser_optimizer.diff.diff import difference_engine
 
 def test_difference_engine_flow():
     url = "https://example.com/form"

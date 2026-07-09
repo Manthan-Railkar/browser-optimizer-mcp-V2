@@ -123,17 +123,17 @@ The server exposes the following tools to the Model Context Protocol environment
 
 ## Architecture and Modules
 
-The application is structured modularly within the `app/` directory to ensure maintainability and separation of concerns:
+The application is structured modularly within the `browser_optimizer/` directory to ensure maintainability and separation of concerns:
 
-* **`app/browser/manager.py`**: Manages the async Playwright browser lifecycle. Reuses page contexts to minimize startup latency and handles navigation constraints.
-* **`app/extractor/extractor.py`**: Retrieves raw HTML and leverages the Playwright `.aria_snapshot()` API to capture accessibility structures.
-* **`app/compressor/compressor.py`**: Contains DOM filtering logic. Removes superfluous tags (scripts, styles, SVGs) and generates a structured list of UI controls.
-* **`app/classifier/classifier.py`**: Implements a heuristics-based scoring algorithm to categorize pages into defined states (`LOGIN`, `SEARCH`, `SURVEY`, `CHECKOUT`, `PRODUCT`, `DASHBOARD`).
-* **`app/diff/diff.py`**: Compares sequential observations of a URL and constructs a delta report utilizing composite element fingerprints.
-* **`app/cache/cache.py`**: Maintains an in-memory `cachetools.TTLCache` indexed by URL, validated via 64-bit `xxhash` HTML signatures.
-* **`app/executor/executor.py`**: Processes standard browser interactions deterministically.
-* **`app/schemas/schemas.py`**: Defines Pydantic data models to ensure strict contract compliance across all modules and tools.
-* **`app/metrics/metrics.py`**: Records data size reductions, cache performance metrics, and aggregate byte savings.
+* **`browser_optimizer/browser/manager.py`**: Manages the async Playwright browser lifecycle. Reuses page contexts to minimize startup latency and handles navigation constraints.
+* **`browser_optimizer/extractor/extractor.py`**: Retrieves raw HTML and leverages the Playwright `.aria_snapshot()` API to capture accessibility structures.
+* **`browser_optimizer/compressor/compressor.py`**: Contains DOM filtering logic. Removes superfluous tags (scripts, styles, SVGs) and generates a structured list of UI controls.
+* **`browser_optimizer/classifier/classifier.py`**: Implements a heuristics-based scoring algorithm to categorize pages into defined states (`LOGIN`, `SEARCH`, `SURVEY`, `CHECKOUT`, `PRODUCT`, `DASHBOARD`).
+* **`browser_optimizer/diff/diff.py`**: Compares sequential observations of a URL and constructs a delta report utilizing composite element fingerprints.
+* **`browser_optimizer/cache/cache.py`**: Maintains an in-memory `cachetools.TTLCache` indexed by URL, validated via 64-bit `xxhash` HTML signatures.
+* **`browser_optimizer/executor/executor.py`**: Processes standard browser interactions deterministically.
+* **`browser_optimizer/schemas/schemas.py`**: Defines Pydantic data models to ensure strict contract compliance across all modules and tools.
+* **`browser_optimizer/metrics/metrics.py`**: Records data size reductions, cache performance metrics, and aggregate byte savings.
 
 ---
 
@@ -192,7 +192,7 @@ Add the following configuration to your `claude_desktop_config.json` file.
         "/c",
         "C:\\path\\to\\browser-optimizer-mcp\\venv\\Scripts\\python.exe",
         "-m",
-        "app.server.main"
+        "browser_optimizer.server.main"
       ],
       "env": {
         "PYTHONPATH": "C:\\path\\to\\browser-optimizer-mcp"
@@ -208,7 +208,7 @@ Add the following configuration to your `claude_desktop_config.json` file.
   "mcpServers": {
     "browser-optimizer": {
       "command": "/path/to/browser-optimizer-mcp/venv/bin/python",
-      "args": ["-m", "app.server.main"],
+      "args": ["-m", "browser_optimizer.server.main"],
       "env": {
         "PYTHONPATH": "/path/to/browser-optimizer-mcp"
       }
@@ -227,7 +227,7 @@ Append this to your `mcp_config.json` file.
   "mcpServers": {
     "browser-optimizer": {
       "command": "C:\\path\\to\\browser-optimizer-mcp\\venv\\Scripts\\python.exe",
-      "args": ["-m", "app.server.main"],
+      "args": ["-m", "browser_optimizer.server.main"],
       "env": {
         "PYTHONPATH": "C:\\path\\to\\browser-optimizer-mcp"
       }
@@ -242,7 +242,7 @@ Append this to your `mcp_config.json` file.
 3. Apply the following settings:
    * **Name**: `browser-optimizer`
    * **Type**: `command`
-   * **Command**: `C:\path\to\browser-optimizer-mcp\venv\Scripts\python.exe -m app.server.main`
+   * **Command**: `C:\path\to\browser-optimizer-mcp\venv\Scripts\python.exe -m browser_optimizer.server.main`
 4. Set the environment variable `PYTHONPATH` = `C:\path\to\browser-optimizer-mcp`.
 5. Click **Save**.
 

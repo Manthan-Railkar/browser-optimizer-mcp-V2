@@ -19,9 +19,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN playwright install chromium --with-deps
 
 # Copy application source
-COPY app/ app/
+COPY browser_optimizer/ browser_optimizer/
 COPY .env .env
 
 # FastMCP defaults to running over stdio. 
 # This command runs the server ready to communicate with host AI agents.
-CMD ["python", "-m", "app.server.main"]
+CMD ["python", "-m", "browser_optimizer.server.main"]

@@ -1,5 +1,5 @@
 import time
-from app.cache.cache import SemanticCache
+from browser_optimizer.cache.cache import SemanticCache
 
 def test_cache_hit_and_miss():
     cache = SemanticCache()

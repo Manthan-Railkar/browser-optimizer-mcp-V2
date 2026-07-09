@@ -1,5 +1,5 @@
 from bs4 import BeautifulSoup
-from app.compressor.compressor import compressor
+from browser_optimizer.compressor.compressor import compressor
 
 def test_clean_dom(sample_login_html):
     soup = BeautifulSoup(sample_login_html, "lxml")

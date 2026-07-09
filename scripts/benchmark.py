@@ -1,12 +1,12 @@
 import asyncio
 import time
 from typing import List
-from app.browser.manager import manager
-from app.extractor.extractor import extractor
-from app.compressor.compressor import compressor
-from app.classifier.classifier import classifier
-from app.cache.cache import semantic_cache
-from app.metrics.metrics import metrics
+from browser_optimizer.browser.manager import manager
+from browser_optimizer.extractor.extractor import extractor
+from browser_optimizer.compressor.compressor import compressor
+from browser_optimizer.classifier.classifier import classifier
+from browser_optimizer.cache.cache import semantic_cache
+from browser_optimizer.metrics.metrics import metrics
 
 # List of URLs to benchmark. Using stable public pages.
 BENCHMARK_URLS = [

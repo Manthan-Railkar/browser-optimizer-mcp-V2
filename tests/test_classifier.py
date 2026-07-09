@@ -1,4 +1,4 @@
-from app.classifier.classifier import classifier, PageType
+from browser_optimizer.classifier.classifier import classifier, PageType
 
 def test_classify_login(sample_ui_elements):
     context = {"ui": sample_ui_elements}
