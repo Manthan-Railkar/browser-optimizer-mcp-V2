@@ -31,17 +31,17 @@ def clean_databases(monkeypatch):
         async def content(self):
             return "<html><head><title>Login Page</title></head><body><button>Login</button></body></html>"
 
-    async def mock_get_page():
+    async def mock_get_page(session_id="default"):
         return DummyPage()
 
-    async def mock_navigate(url):
+    async def mock_navigate(url, session_id="default"):
         return DummyPage()
 
     monkeypatch.setattr(manager, "get_page", mock_get_page)
     monkeypatch.setattr(manager, "navigate", mock_navigate)
 
     # Mock action_executor.execute to behave deterministically based on action/selector
-    async def mock_execute(page, action, selector, value):
+    async def mock_execute(page, action, selector, value, session_id="default"):
         if selector == "#nonexistent":
             return {"success": False, "message": "Selector not found"}
         return {"success": True, "message": "Action executed successfully"}
@@ -154,9 +154,9 @@ async def test_macro_gating_and_suspension_flow():
 
     # 2. Check that replay is suspended at next step (index 2)
     from browser_optimizer.server import main as server_main
-    assert server_main.suspended_replay is not None
-    assert server_main.suspended_replay["macro_id"] == macro_id
-    assert server_main.suspended_replay["next_step_index"] == 2
+    assert "default" in server_main.suspended_replays
+    assert server_main.suspended_replays["default"]["macro_id"] == macro_id
+    assert server_main.suspended_replays["default"]["next_step_index"] == 2
 
     # 3. Verify confidence dropped to 0.5 (0.8 - 0.3)
     macro = macro_store.get_macro(macro_id)
@@ -166,7 +166,7 @@ async def test_macro_gating_and_suspension_flow():
     resume_res = await resume_skill({})
     assert resume_res["success"] is True
     assert "Successfully finished replaying" in resume_res["message"]
-    assert server_main.suspended_replay is None
+    assert "default" not in server_main.suspended_replays
 
     # 5. Check confidence grew to 0.55 (0.5 + 0.05)
     macro = macro_store.get_macro(macro_id)

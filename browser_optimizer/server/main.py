@@ -35,7 +35,7 @@ async def shutdown():
 
 
 @mcp.tool()
-async def extract_context(url: str) -> Dict[str, Any]:
+async def extract_context(url: str, session_id: str = "default") -> Dict[str, Any]:
     """
     Navigate to a URL, extract HTML and accessibility tree, compress context to essential UI elements,
     classify the page, cache the result, and return the optimized context.
@@ -47,12 +47,12 @@ async def extract_context(url: str) -> Dict[str, Any]:
     """
     try:
         # 1. Get page and check cache if enabled
-        page = await manager.get_page()
+        page = await manager.get_page(session_id)
 
         # If page is already on this URL, we can grab its content directly to check cache.
         # Otherwise, navigate first.
         if page.url != url:
-            page = await manager.navigate(url)
+            page = await manager.navigate(url, session_id)
 
         html = await page.content()
 
@@ -158,14 +158,14 @@ async def extract_context(url: str) -> Dict[str, Any]:
 
 
 @mcp.tool()
-async def page_diff(url: str) -> Dict[str, Any]:
+async def page_diff(url: str, session_id: str = "default") -> Dict[str, Any]:
     """
     Extract the current page's context and return only the changes (added/removed/changed elements)
     since the last observation of this URL.
     """
     try:
         # Extract fresh context or fetch from cache
-        context = await extract_context(url)
+        context = await extract_context(url, session_id=session_id)
         if not context.get("success", True):
             return context
             
@@ -180,14 +180,19 @@ async def page_diff(url: str) -> Dict[str, Any]:
 
 
 @mcp.tool()
-async def execute_action(action: str, selector: Optional[str] = None, value: Optional[str] = None) -> Dict[str, Any]:
+async def execute_action(
+    action: str,
+    selector: Optional[str] = None,
+    value: Optional[str] = None,
+    session_id: str = "default"
+) -> Dict[str, Any]:
     """
     Execute a browser action (click, type, select, scroll, wait, navigate) using Playwright.
     """
     try:
-        page = await manager.get_page()
+        page = await manager.get_page(session_id)
         url_before = page.url
-        result = await action_executor.execute(page, action, selector, value)
+        result = await action_executor.execute(page, action, selector, value, session_id=session_id)
         
         if result.get("success"):
             metrics.record_action()
@@ -202,14 +207,14 @@ async def execute_action(action: str, selector: Optional[str] = None, value: Opt
 
 
 @mcp.tool()
-async def summarize_page(url: str) -> Dict[str, Any]:
+async def summarize_page(url: str, session_id: str = "default") -> Dict[str, Any]:
     """
     Produce a concise semantic summary of the page, including its title, purpose,
     number of interactive elements, and main textual content.
     """
     try:
         # Get page context (cache-friendly)
-        context = await extract_context(url)
+        context = await extract_context(url, session_id=session_id)
         if not context.get("success", True):
             return context
             
@@ -255,12 +260,12 @@ async def summarize_page(url: str) -> Dict[str, Any]:
 
 
 @mcp.tool()
-async def classify_page(url: str) -> Dict[str, Any]:
+async def classify_page(url: str, session_id: str = "default") -> Dict[str, Any]:
     """
     Examine the page and determine its category (e.g. login, product, search, checkout, survey, dashboard).
     """
     try:
-        context = await extract_context(url)
+        context = await extract_context(url, session_id=session_id)
         if not context.get("success", True):
             return context
             
@@ -271,12 +276,12 @@ async def classify_page(url: str) -> Dict[str, Any]:
 
 
 @mcp.tool()
-async def wait_until_ready(url: str, timeout: Optional[int] = None) -> Dict[str, Any]:
+async def wait_until_ready(url: str, timeout: Optional[int] = None, session_id: str = "default") -> Dict[str, Any]:
     """
     Navigate to a page and wait for the DOM content to be loaded and network to stabilize.
     """
     try:
-        page = await manager.get_page()
+        page = await manager.get_page(session_id)
         wait_timeout = timeout or settings.BROWSER_TIMEOUT
         
         logger.info(f"Navigating to {url} and waiting up to {wait_timeout}ms for readiness...")
@@ -289,7 +294,7 @@ async def wait_until_ready(url: str, timeout: Optional[int] = None) -> Dict[str,
 
 
 @mcp.tool()
-async def cache_lookup(url: str) -> Dict[str, Any]:
+async def cache_lookup(url: str, session_id: str = "default") -> Dict[str, Any]:
     """
     Lookup a URL directly in the cache to check if we already have compressed context stored.
     """
@@ -318,23 +323,28 @@ def get_metrics() -> Dict[str, Any]:
 
 
 @mcp.tool()
-async def start_macro_recording() -> Dict[str, Any]:
+async def start_macro_recording(session_id: str = "default") -> Dict[str, Any]:
     """
     Start recording a sequence of browser actions to create a reusable skill macro.
     """
-    action_executor.start_recording()
-    return {"success": True, "message": "Started recording macro actions."}
+    action_executor.start_recording(session_id)
+    return {"success": True, "message": f"Started recording macro actions for session '{session_id}'."}
 
 
 @mcp.tool()
-async def save_macro(name: str, page_type: str, parameters_map: Dict[str, str]) -> Dict[str, Any]:
+async def save_macro(
+    name: str,
+    page_type: str,
+    parameters_map: Dict[str, str],
+    session_id: str = "default"
+) -> Dict[str, Any]:
     """
     Stop recording and save the macro. 
     parameters_map: A dictionary of key: value mapping for parameter extraction. 
     e.g. {"username": "testuser", "password": "mypassword"}.
     The executor will replace instances of "testuser" with "{username}" in the saved sequence.
     """
-    sequence = action_executor.stop_recording()
+    sequence = action_executor.stop_recording(session_id)
     if not sequence:
         return {"success": False, "message": "No actions recorded."}
         
@@ -390,34 +400,50 @@ async def suggest_skill(page_type: str) -> Dict[str, Any]:
     }
 
 
-# Global state for suspended macro replays
-suspended_replay: Optional[Dict[str, Any]] = None
+# Global state for suspended macro replays per session
+suspended_replays: Dict[str, Dict[str, Any]] = {}
 
 
 @mcp.tool()
-async def replay_skill(macro_id: int, parameters: Dict[str, str], expected_url: Optional[str] = None, expected_page_type: Optional[str] = None) -> Dict[str, Any]:
+async def replay_skill(
+    macro_id: int,
+    parameters: Dict[str, str],
+    expected_url: Optional[str] = None,
+    expected_page_type: Optional[str] = None,
+    session_id: str = "default"
+) -> Dict[str, Any]:
     """
-    Replay a previously recorded macro.
+    Replay a previously recorded macro in a given session.
     Inject parameters into the placeholders (e.g. {username}) before execution.
     If expected_url or expected_page_type are provided, the system will verify the post-state and auto-decay on mismatch.
     """
+    global suspended_replays
     macro = macro_store.get_macro(macro_id)
     if not macro:
         return {"success": False, "message": f"Macro {macro_id} not found."}
         
+    confidence = macro.get("confidence", 0.8)
+    if confidence < 0.3:
+        return {
+            "success": False,
+            "message": f"Macro '{macro['name']}' confidence is too low ({confidence:.2f} < 0.3). Skipping macro replay. Please execute actions manually."
+        }
+        
     sequence = macro["sequence"]
+    logger.info(f"Replaying macro '{macro['name']}' with params {parameters} in session '{session_id}'")
     
-    logger.info(f"Replaying macro '{macro['name']}' with params {parameters}")
-    
-    page = await manager.get_page()
+    page = await manager.get_page(session_id)
     
     # Temporarily disable recording if it was on
-    was_recording = action_executor.recording
-    action_executor.recording = False
+    was_recording = action_executor.is_recording(session_id)
+    if was_recording:
+        action_executor.recordings.pop(session_id, None)
+    
+    verify_steps = 0.3 <= confidence < 0.7
     
     success_count = 0
     try:
-        for step in sequence:
+        for i, step in enumerate(sequence):
             action = step["action"]
             selector = step["selector"]
             value = step.get("value")
@@ -429,8 +455,14 @@ async def replay_skill(macro_id: int, parameters: Dict[str, str], expected_url: 
                     if placeholder in value:
                         value = value.replace(placeholder, pv)
             
-            result = await action_executor.execute(page, action, selector, value)
+            result = await action_executor.execute(page, action, selector, value, session_id=session_id)
             if not result.get("success"):
+                # Suspend macro replay
+                suspended_replays[session_id] = {
+                    "macro_id": macro_id,
+                    "next_step_index": i + 1,
+                    "parameters": parameters
+                }
                 macro_store.update_confidence(macro_id, success=False)
                 return {
                     "success": False,
@@ -474,7 +506,7 @@ async def replay_skill(macro_id: int, parameters: Dict[str, str], expected_url: 
                 
             if expected_page_type:
                 # Classify the new page to verify
-                context = await extract_context(current_url)
+                context = await extract_context(current_url, session_id=session_id)
                 current_page_type = context.get("classification", {}).get("page_type")
                 if current_page_type != expected_page_type:
                     macro_store.update_confidence(macro_id, success=False)
@@ -490,27 +522,29 @@ async def replay_skill(macro_id: int, parameters: Dict[str, str], expected_url: 
                     }
 
         macro_store.update_confidence(macro_id, success=True)
-        if suspended_replay and suspended_replay.get("macro_id") == macro_id:
-            suspended_replay = None
+        if session_id in suspended_replays and suspended_replays[session_id].get("macro_id") == macro_id:
+            suspended_replays.pop(session_id, None)
         return {"success": True, "message": f"Successfully replayed macro '{macro['name']}'."}
         
     finally:
-        action_executor.recording = was_recording
+        if was_recording:
+            action_executor.start_recording(session_id)
 
 
 @mcp.tool()
-async def resume_skill(parameters: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+async def resume_skill(parameters: Optional[Dict[str, str]] = None, session_id: str = "default") -> Dict[str, Any]:
     """
-    Resume a suspended macro replay from the step following the failure.
+    Resume a suspended macro replay from the step following the failure for the given session.
     Optional parameters can override/update parameters if needed.
     """
-    global suspended_replay
-    if not suspended_replay:
-        return {"success": False, "message": "No suspended macro replay found."}
+    global suspended_replays
+    if session_id not in suspended_replays:
+        return {"success": False, "message": f"No suspended macro replay found for session '{session_id}'."}
         
-    macro_id = suspended_replay["macro_id"]
-    start_index = suspended_replay["next_step_index"]
-    original_parameters = suspended_replay["parameters"]
+    session_state = suspended_replays[session_id]
+    macro_id = session_state["macro_id"]
+    start_index = session_state["next_step_index"]
+    original_parameters = session_state["parameters"]
     
     # Merge parameters if new ones provided
     if parameters:
@@ -518,23 +552,24 @@ async def resume_skill(parameters: Optional[Dict[str, str]] = None) -> Dict[str,
         
     macro = macro_store.get_macro(macro_id)
     if not macro:
-        suspended_replay = None
+        suspended_replays.pop(session_id, None)
         return {"success": False, "message": f"Macro {macro_id} not found."}
         
     sequence = macro["sequence"]
     if start_index >= len(sequence):
         macro_store.update_confidence(macro_id, success=True)
-        suspended_replay = None
+        suspended_replays.pop(session_id, None)
         return {"success": True, "message": f"Successfully finished replaying remaining steps of '{macro['name']}'."}
         
-    page = await manager.get_page()
-    was_recording = action_executor.recording
-    action_executor.recording = False
+    page = await manager.get_page(session_id)
+    was_recording = action_executor.is_recording(session_id)
+    if was_recording:
+        action_executor.recordings.pop(session_id, None)
     
     confidence = macro.get("confidence", 0.8)
     verify_steps = 0.3 <= confidence < 0.7
     
-    logger.info(f"Resuming macro '{macro['name']}' from step {start_index} with params {original_parameters}")
+    logger.info(f"Resuming macro '{macro['name']}' from step {start_index} with params {original_parameters} in session '{session_id}'")
     
     try:
         for i in range(start_index, len(sequence)):
@@ -550,10 +585,10 @@ async def resume_skill(parameters: Optional[Dict[str, str]] = None) -> Dict[str,
                     if placeholder in value:
                         value = value.replace(placeholder, pv)
                         
-            result = await action_executor.execute(page, action, selector, value)
+            result = await action_executor.execute(page, action, selector, value, session_id=session_id)
             if not result.get("success"):
                 # Update suspension index to the next step
-                suspended_replay["next_step_index"] = i + 1
+                session_state["next_step_index"] = i + 1
                 macro_store.update_confidence(macro_id, success=False)
                 return {
                     "success": False,
@@ -574,11 +609,22 @@ async def resume_skill(parameters: Optional[Dict[str, str]] = None) -> Dict[str,
                     
         # All steps completed successfully
         macro_store.update_confidence(macro_id, success=True)
-        suspended_replay = None
+        suspended_replays.pop(session_id, None)
         return {"success": True, "message": f"Successfully finished replaying remaining steps of '{macro['name']}'."}
         
     finally:
-        action_executor.recording = was_recording
+        if was_recording:
+            action_executor.start_recording(session_id)
+
+
+@mcp.tool()
+async def close_session(session_id: str) -> Dict[str, Any]:
+    """
+    Close page and BrowserContext for a specific session.
+    """
+    await manager.close_session(session_id)
+    suspended_replays.pop(session_id, None)
+    return {"success": True, "message": f"Session '{session_id}' has been closed."}
 
 
 async def main():

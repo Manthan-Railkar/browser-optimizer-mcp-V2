@@ -11,22 +11,31 @@ class RuleBasedExecutor:
     """
     Executes standard actions directly on a Playwright Page.
     Handles selectors, keystrokes, drop-down options, scrolling, and waits with automated timeouts.
+    Supports session-isolated recording.
     """
     def __init__(self):
-        self.recording = False
-        self._current_sequence = []
+        self.recordings = {}  # dict of session_id: list of steps
 
-    def start_recording(self):
-        self.recording = True
-        self._current_sequence = []
+    def start_recording(self, session_id: str = "default"):
+        """Start recording actions for a specific session."""
+        self.recordings[session_id] = []
 
-    def stop_recording(self) -> list:
-        self.recording = False
-        seq = self._current_sequence
-        self._current_sequence = []
-        return seq
+    def stop_recording(self, session_id: str = "default") -> list:
+        """Stop recording and return the recorded sequence for a specific session."""
+        return self.recordings.pop(session_id, [])
 
-    async def execute(self, page: Page, action: str, selector: Optional[str] = None, value: Optional[str] = None) -> Dict[str, Any]:
+    def is_recording(self, session_id: str = "default") -> bool:
+        """Check if recording is active for a specific session."""
+        return session_id in self.recordings
+
+    async def execute(
+        self,
+        page: Page,
+        action: str,
+        selector: Optional[str] = None,
+        value: Optional[str] = None,
+        session_id: str = "default"
+    ) -> Dict[str, Any]:
         """
         Execute a deterministic browser action on the current page.
         
@@ -35,12 +44,13 @@ class RuleBasedExecutor:
             action (str): Target action type (navigate, click, type, select, scroll, wait).
             selector (str, optional): Target element selector string (CSS/XPath/Text).
             value (str, optional): Input parameter value depending on action type.
+            session_id (str): Target session ID.
             
         Returns:
             dict: Status report containing 'success' boolean and 'message' description.
         """
         action = action.lower().strip()
-        logger.info(f"Executing action: {action} | Selector: {selector} | Value: {value}")
+        logger.info(f"Executing action: {action} | Selector: {selector} | Value: {value} | Session: {session_id}")
 
         result = {"success": False, "message": "Unknown error"}
 
@@ -97,8 +107,8 @@ class RuleBasedExecutor:
             logger.error(error_msg)
             result = {"success": False, "message": error_msg}
 
-        if result.get("success") and self.recording:
-            self._current_sequence.append({
+        if result.get("success") and session_id in self.recordings:
+            self.recordings[session_id].append({
                 "action": action,
                 "selector": selector,
                 "value": value
