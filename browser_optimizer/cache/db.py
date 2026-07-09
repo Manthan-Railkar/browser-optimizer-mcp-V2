@@ -30,12 +30,17 @@ class SQLiteCache:
                     created_at REAL,
                     ttl REAL,
                     hit_count INTEGER DEFAULT 0,
-                    embedding TEXT
+                    embedding TEXT,
+                    confidence REAL DEFAULT 0.8
                 )
             ''')
-            # Migration: add embedding column if missing (existing databases)
+            # Migrations: add columns if missing (existing databases)
             try:
                 conn.execute("ALTER TABLE cache ADD COLUMN embedding TEXT")
+            except sqlite3.OperationalError:
+                pass  # column already exists
+            try:
+                conn.execute("ALTER TABLE cache ADD COLUMN confidence REAL DEFAULT 0.8")
             except sqlite3.OperationalError:
                 pass  # column already exists
             conn.commit()
@@ -47,14 +52,20 @@ class SQLiteCache:
         """
         self.purge_expired()
         with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute("SELECT value, hit_count FROM cache WHERE key = ?", (key,))
+            cursor = conn.execute("SELECT value, hit_count, confidence FROM cache WHERE key = ?", (key,))
             row = cursor.fetchone()
             if row:
-                value_str, hit_count = row
+                value_str, hit_count, confidence = row
                 # Increment hit_count
                 conn.execute("UPDATE cache SET hit_count = ? WHERE key = ?", (hit_count + 1, key))
                 conn.commit()
-                return json.loads(value_str)
+                try:
+                    data = json.loads(value_str)
+                    if isinstance(data, dict):
+                        data["confidence"] = confidence
+                    return data
+                except (json.JSONDecodeError, TypeError):
+                    pass
         return default
 
     def set(self, key: str, value: Any, embedding: Optional[List[float]] = None):
@@ -66,16 +77,33 @@ class SQLiteCache:
         created_at = time.time()
         with sqlite3.connect(self.db_path) as conn:
             conn.execute('''
-                INSERT INTO cache (key, value, created_at, ttl, hit_count, embedding)
-                VALUES (?, ?, ?, ?, 0, ?)
+                INSERT INTO cache (key, value, created_at, ttl, hit_count, embedding, confidence)
+                VALUES (?, ?, ?, ?, 0, ?, 0.8)
                 ON CONFLICT(key) DO UPDATE SET
                     value=excluded.value,
                     created_at=excluded.created_at,
                     ttl=excluded.ttl,
                     hit_count=0,
-                    embedding=excluded.embedding
+                    embedding=excluded.embedding,
+                    confidence=0.8
             ''', (key, value_str, created_at, self.ttl, embedding_str))
             conn.commit()
+
+    def update_confidence(self, key: str, success: bool):
+        """
+        Adjust the confidence score of a page context cache entry based on success/failure.
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("SELECT confidence FROM cache WHERE key = ?", (key,))
+            row = cursor.fetchone()
+            if row:
+                confidence = row[0]
+                if success:
+                    confidence = min(1.0, confidence + 0.05)
+                else:
+                    confidence = max(0.0, confidence - 0.3)
+                conn.execute("UPDATE cache SET confidence = ? WHERE key = ?", (confidence, key))
+                conn.commit()
 
     def __setitem__(self, key: str, value: Any):
         """
@@ -94,13 +122,15 @@ class SQLiteCache:
         results = []
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute(
-                "SELECT key, embedding, value FROM cache WHERE embedding IS NOT NULL"
+                "SELECT key, embedding, value, confidence FROM cache WHERE embedding IS NOT NULL"
             )
             for row in cursor.fetchall():
-                key, emb_str, val_str = row
+                key, emb_str, val_str, confidence = row
                 try:
                     embedding = json.loads(emb_str)
                     value = json.loads(val_str)
+                    if isinstance(value, dict):
+                        value["confidence"] = confidence
                     results.append((key, embedding, value))
                 except (json.JSONDecodeError, TypeError):
                     continue
@@ -142,11 +172,13 @@ class MacroStore:
                     name TEXT,
                     page_type TEXT,
                     sequence TEXT,
-                    confidence REAL DEFAULT 1.0,
+                    confidence REAL DEFAULT 0.8,
                     success_count INTEGER DEFAULT 0,
                     fail_count INTEGER DEFAULT 0
                 )
             ''')
+            # Migration: alter macros table confidence default to 0.8 if already exists
+            # SQLite does not easily allow altering column defaults, but new rows can insert 0.8 explicitly.
             conn.commit()
 
     def save_macro(self, name: str, page_type: str, sequence: list) -> int:
@@ -154,7 +186,7 @@ class MacroStore:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute('''
                 INSERT INTO macros (name, page_type, sequence, confidence, success_count, fail_count)
-                VALUES (?, ?, ?, 1.0, 0, 0)
+                VALUES (?, ?, ?, 0.8, 0, 0)
             ''', (name, page_type, sequence_str))
             conn.commit()
             return cursor.lastrowid
@@ -204,10 +236,10 @@ class MacroStore:
                 confidence, success_count, fail_count = row
                 if success:
                     success_count += 1
-                    confidence = min(1.0, confidence + 0.1)
+                    confidence = min(1.0, confidence + 0.05)
                 else:
                     fail_count += 1
-                    confidence = max(0.0, confidence - 0.2)
+                    confidence = max(0.0, confidence - 0.3)
                 
                 conn.execute('''
                     UPDATE macros

@@ -60,6 +60,24 @@ async def extract_context(url: str) -> Dict[str, Any]:
         cached_context = semantic_cache.lookup(url, html)
 
         if cached_context:
+            confidence = cached_context.get("confidence", 0.8)
+            if confidence < 0.3:
+                logger.info(f"Cache entry confidence too low ({confidence:.2f} < 0.3). Skipping cache reuse.")
+                cached_context = None
+            elif 0.3 <= confidence < 0.7:
+                logger.info(f"Cache entry confidence in verification range ({confidence:.2f}). Verifying expected page state...")
+                current_title = await page.title()
+                if current_title != cached_context.get("title", ""):
+                    logger.warning(
+                        f"Cache verification failed: Title mismatch. Expected '{cached_context.get('title')}', "
+                        f"got '{current_title}'. Skipping reuse."
+                    )
+                    semantic_cache.update_confidence(url, success=False)
+                    cached_context = None
+                else:
+                    logger.info("Cache verification succeeded: Title matches.")
+
+        if cached_context:
             is_semantic = cached_context.get("semantic_match", False)
 
             if not is_semantic:
@@ -168,10 +186,14 @@ async def execute_action(action: str, selector: Optional[str] = None, value: Opt
     """
     try:
         page = await manager.get_page()
+        url_before = page.url
         result = await action_executor.execute(page, action, selector, value)
         
         if result.get("success"):
             metrics.record_action()
+            semantic_cache.update_confidence(url_before, success=True)
+        else:
+            semantic_cache.update_confidence(url_before, success=False)
             
         return result
     except Exception as e:
@@ -338,19 +360,30 @@ async def list_skills(page_type: Optional[str] = None) -> Dict[str, Any]:
     return {"success": True, "macros": macros}
 
 
+# Global state for suspended macro replays
+suspended_replay: Optional[Dict[str, Any]] = None
+
+
 @mcp.tool()
 async def replay_skill(macro_id: int, parameters: Dict[str, str]) -> Dict[str, Any]:
     """
     Replay a previously recorded macro.
     Inject parameters into the placeholders (e.g. {username}) before execution.
     """
+    global suspended_replay
     macro = macro_store.get_macro(macro_id)
     if not macro:
         return {"success": False, "message": f"Macro {macro_id} not found."}
         
+    confidence = macro.get("confidence", 0.8)
+    if confidence < 0.3:
+        return {
+            "success": False,
+            "message": f"Macro '{macro['name']}' confidence is too low ({confidence:.2f} < 0.3). Skipping macro replay. Please execute actions manually."
+        }
+        
     sequence = macro["sequence"]
-    
-    logger.info(f"Replaying macro '{macro['name']}' with params {parameters}")
+    logger.info(f"Replaying macro '{macro['name']}' with confidence {confidence:.2f} and params {parameters}")
     
     page = await manager.get_page()
     
@@ -358,9 +391,11 @@ async def replay_skill(macro_id: int, parameters: Dict[str, str]) -> Dict[str, A
     was_recording = action_executor.recording
     action_executor.recording = False
     
+    verify_steps = 0.3 <= confidence < 0.7
+    
     success_count = 0
     try:
-        for step in sequence:
+        for i, step in enumerate(sequence):
             action = step["action"]
             selector = step["selector"]
             value = step.get("value")
@@ -374,13 +409,119 @@ async def replay_skill(macro_id: int, parameters: Dict[str, str]) -> Dict[str, A
             
             result = await action_executor.execute(page, action, selector, value)
             if not result.get("success"):
+                # Suspend macro replay
+                suspended_replay = {
+                    "macro_id": macro_id,
+                    "next_step_index": i + 1,
+                    "parameters": parameters
+                }
                 macro_store.update_confidence(macro_id, success=False)
-                return {"success": False, "message": f"Macro failed at step {success_count}: {result.get('message')}"}
+                return {
+                    "success": False,
+                    "failed_step_index": i,
+                    "failed_action": action,
+                    "failed_selector": selector,
+                    "message": (
+                        f"Macro failed at step {i} ({action} {selector}) with error: {result.get('message')}. "
+                        "Macro replay has been suspended. Please execute this step manually using execute_action, "
+                        "and then call the resume_skill tool to complete the remaining steps."
+                    )
+                }
                 
+            if verify_steps:
+                try:
+                    await page.wait_for_load_state("domcontentloaded", timeout=2000)
+                except Exception:
+                    pass
             success_count += 1
             
         macro_store.update_confidence(macro_id, success=True)
+        if suspended_replay and suspended_replay.get("macro_id") == macro_id:
+            suspended_replay = None
         return {"success": True, "message": f"Successfully replayed macro '{macro['name']}'."}
+        
+    finally:
+        action_executor.recording = was_recording
+
+
+@mcp.tool()
+async def resume_skill(parameters: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    """
+    Resume a suspended macro replay from the step following the failure.
+    Optional parameters can override/update parameters if needed.
+    """
+    global suspended_replay
+    if not suspended_replay:
+        return {"success": False, "message": "No suspended macro replay found."}
+        
+    macro_id = suspended_replay["macro_id"]
+    start_index = suspended_replay["next_step_index"]
+    original_parameters = suspended_replay["parameters"]
+    
+    # Merge parameters if new ones provided
+    if parameters:
+        original_parameters.update(parameters)
+        
+    macro = macro_store.get_macro(macro_id)
+    if not macro:
+        suspended_replay = None
+        return {"success": False, "message": f"Macro {macro_id} not found."}
+        
+    sequence = macro["sequence"]
+    if start_index >= len(sequence):
+        macro_store.update_confidence(macro_id, success=True)
+        suspended_replay = None
+        return {"success": True, "message": f"Successfully finished replaying remaining steps of '{macro['name']}'."}
+        
+    page = await manager.get_page()
+    was_recording = action_executor.recording
+    action_executor.recording = False
+    
+    confidence = macro.get("confidence", 0.8)
+    verify_steps = 0.3 <= confidence < 0.7
+    
+    logger.info(f"Resuming macro '{macro['name']}' from step {start_index} with params {original_parameters}")
+    
+    try:
+        for i in range(start_index, len(sequence)):
+            step = sequence[i]
+            action = step["action"]
+            selector = step["selector"]
+            value = step.get("value")
+            
+            # Inject parameters
+            if value and isinstance(value, str):
+                for pk, pv in original_parameters.items():
+                    placeholder = f"{{{pk}}}"
+                    if placeholder in value:
+                        value = value.replace(placeholder, pv)
+                        
+            result = await action_executor.execute(page, action, selector, value)
+            if not result.get("success"):
+                # Update suspension index to the next step
+                suspended_replay["next_step_index"] = i + 1
+                macro_store.update_confidence(macro_id, success=False)
+                return {
+                    "success": False,
+                    "failed_step_index": i,
+                    "failed_action": action,
+                    "failed_selector": selector,
+                    "message": (
+                        f"Resumed step {i} ({action} {selector}) failed with error: {result.get('message')}. "
+                        "Replay is suspended again. Please execute manually and run resume_skill to try the rest."
+                    )
+                }
+                
+            if verify_steps:
+                try:
+                    await page.wait_for_load_state("domcontentloaded", timeout=2000)
+                except Exception:
+                    pass
+                    
+        # All steps completed successfully
+        macro_store.update_confidence(macro_id, success=True)
+        suspended_replay = None
+        return {"success": True, "message": f"Successfully finished replaying remaining steps of '{macro['name']}'."}
         
     finally:
         action_executor.recording = was_recording

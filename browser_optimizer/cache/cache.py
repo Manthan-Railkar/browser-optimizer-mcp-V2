@@ -71,29 +71,39 @@ class SemanticCache:
 
         # ── Tier 1: exact hash match ──────────────────────────
         if cached_entry:
-            cached_hash = cached_entry.get("hash")
-            if cached_hash == current_hash:
-                logger.info(f"Cache EXACT HIT for URL: {url}")
-                return cached_entry.get("context")
+            confidence = cached_entry.get("confidence", 0.8)
+            if confidence < 0.3:
+                logger.info(f"Cache entry confidence too low ({confidence:.2f} < 0.3). Skipping exact hit.")
             else:
-                logger.info(f"Cache MISMATCH (HTML changed) for URL: {url}")
+                cached_hash = cached_entry.get("hash")
+                if cached_hash == current_hash:
+                    logger.info(f"Cache EXACT HIT for URL: {url}")
+                    ctx = dict(cached_entry.get("context"))
+                    ctx["confidence"] = confidence
+                    return ctx
+                else:
+                    logger.info(f"Cache MISMATCH (HTML changed) for URL: {url}")
         else:
             logger.info(f"Cache MISS for URL: {url}")
 
         # ── Tier 2: semantic similarity fallback ──────────────
         semantic_result = self._semantic_lookup(current_html)
         if semantic_result is not None:
-            matched_context, score, matched_url = semantic_result
-            logger.info(
-                f"Cache SEMANTIC HIT for URL: {url} "
-                f"(matched {matched_url}, similarity={score:.4f})"
-            )
-            # Return the cached context annotated with the semantic match info
-            ctx = dict(matched_context)  # shallow copy
-            ctx["semantic_match"] = True
-            ctx["similarity_score"] = round(score, 4)
-            ctx["matched_url"] = matched_url
-            return ctx
+            matched_context, score, matched_url, confidence = semantic_result
+            if confidence < 0.3:
+                logger.info(f"Cache semantic match confidence too low ({confidence:.2f} < 0.3). Skipping semantic hit.")
+            else:
+                logger.info(
+                    f"Cache SEMANTIC HIT for URL: {url} "
+                    f"(matched {matched_url}, similarity={score:.4f})"
+                )
+                # Return the cached context annotated with the semantic match info
+                ctx = dict(matched_context)  # shallow copy
+                ctx["semantic_match"] = True
+                ctx["similarity_score"] = round(score, 4)
+                ctx["matched_url"] = matched_url
+                ctx["confidence"] = confidence
+                return ctx
 
         # Store the current hash to associate with the URL
         self._url_to_hash[url] = current_hash
@@ -101,12 +111,12 @@ class SemanticCache:
 
     def _semantic_lookup(
         self, current_html: str
-    ) -> Optional[Tuple[Dict[str, Any], float, str]]:
+    ) -> Optional[Tuple[Dict[str, Any], float, str, float]]:
         """
         Scan all cached embeddings for a near-duplicate structural match.
 
         Returns:
-            A tuple of (cached_context, similarity_score, matched_url) if the
+            A tuple of (cached_context, similarity_score, matched_url, confidence) if the
             best cosine similarity exceeds the threshold, else None.
         """
         current_embedding = structural_embedding.generate(current_html)
@@ -118,6 +128,7 @@ class SemanticCache:
         best_score = -1.0
         best_context = None
         best_url = None
+        best_confidence = 0.8
 
         for stored_url, stored_embedding, stored_value in entries:
             score = structural_embedding.cosine_similarity(
@@ -127,9 +138,10 @@ class SemanticCache:
                 best_score = score
                 best_context = stored_value.get("context")
                 best_url = stored_url
+                best_confidence = stored_value.get("confidence", 0.8)
 
         if best_score >= self.similarity_threshold and best_context is not None:
-            return (best_context, best_score, best_url)
+            return (best_context, best_score, best_url, best_confidence)
 
         return None
 
@@ -157,6 +169,13 @@ class SemanticCache:
         self._cache.set(url, entry, embedding=embedding)
         self._url_to_hash[url] = page_hash
         logger.info(f"Cached context for URL: {url} (Hash: {page_hash}, Embedding dim={len(embedding)})")
+
+    def update_confidence(self, url: str, success: bool):
+        """
+        Update the confidence score of a cache entry based on success/failure of interactions on that page.
+        """
+        if self.enabled:
+            self._cache.update_confidence(url, success)
 
     def clear(self):
         """
