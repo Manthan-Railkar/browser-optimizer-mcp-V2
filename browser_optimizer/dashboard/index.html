@@ -213,6 +213,31 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- Session Replay Timeline -->
+                <div class="bg-surface-container-lowest p-6 rounded-2xl shadow-sm animate-fade-in-up" style="animation-delay: 0.44s">
+                    <div class="flex justify-between items-center mb-5">
+                        <div>
+                            <h2 class="text-[18px] font-semibold text-on-surface">Lightweight Session Replay</h2>
+                            <p class="text-[13px] text-on-surface-variant">Step-by-step page states and actions taken</p>
+                        </div>
+                        <div class="flex items-center gap-3">
+                            <label class="text-[11px] font-semibold text-on-surface-variant uppercase">Session:</label>
+                            <select id="replay-session-select" onchange="fetchReplay()" class="text-[12px] bg-surface-container-low border-0 rounded-lg py-1 px-2.5 font-medium text-on-surface focus:ring-1 focus:ring-primary">
+                                <option value="default">default</option>
+                            </select>
+                            <button onclick="fetchReplay()" class="p-1 rounded-lg hover:bg-surface-container-high text-on-surface-variant hover:text-primary transition-all">
+                                <span class="material-symbols-outlined text-[20px]">refresh</span>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="relative pl-6 border-l-2 border-outline-variant/30 space-y-6 ml-2" id="replay-timeline">
+                        <div class="text-center text-on-surface-variant text-[13px] py-8">
+                            <span class="material-symbols-outlined text-[36px] text-outline-variant block mb-2">history</span>
+                            No events logged in this session yet.
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <!-- Right Sidebar (4 cols) -->
@@ -450,12 +475,102 @@
             `).join("");
         }
 
+        // ─── Session Replay Rendering ───────────────────────────
+        async function fetchReplay() {
+            const select = document.getElementById("replay-session-select");
+            const sessionId = select.value || "default";
+            try {
+                const res = await fetch(`/api/replay?session_id=${sessionId}`);
+                if (!res.ok) throw new Error("HTTP " + res.status);
+                const logs = await res.json();
+                renderReplay(logs);
+            } catch (err) {
+                console.error("Error fetching replay:", err);
+            }
+        }
+
+        function renderReplay(logs) {
+            const container = document.getElementById("replay-timeline");
+            if (!logs || !logs.length) {
+                container.innerHTML = `
+                    <div class="text-center text-on-surface-variant text-[13px] py-8">
+                        <span class="material-symbols-outlined text-[36px] text-outline-variant block mb-2">history</span>
+                        No events logged in this session yet.
+                    </div>`;
+                return;
+            }
+
+            container.innerHTML = logs.map((log, idx) => {
+                const time = new Date(log.timestamp * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+                
+                // Determine icon and color based on outcome and action
+                let icon = "info";
+                let iconBg = "bg-primary/10 text-primary";
+                
+                const lowerOutcome = log.outcome.toLowerCase();
+                const lowerAction = log.action_taken.toLowerCase();
+                
+                if (lowerOutcome.includes("success")) {
+                    icon = "check_circle";
+                    iconBg = "bg-tertiary/10 text-tertiary";
+                } else if (lowerOutcome.includes("failed") || lowerOutcome.includes("error")) {
+                    icon = "error";
+                    iconBg = "bg-error/10 text-error";
+                } else if (lowerOutcome.includes("cache_hit") || lowerOutcome.includes("exact_cache_hit") || lowerOutcome.includes("semantic_cache_hit")) {
+                    icon = "cached";
+                    iconBg = "bg-secondary/10 text-secondary";
+                } else if (lowerOutcome.includes("suspended")) {
+                    icon = "pause_circle";
+                    iconBg = "bg-yellow-500/10 text-yellow-600";
+                }
+
+                const classificationBadge = log.page_classification 
+                    ? `<span class="bg-primary/10 text-primary text-[9px] font-bold px-1.5 py-0.5 rounded-full uppercase">${log.page_classification}</span>`
+                    : "";
+
+                const confidenceText = log.confidence_used !== null && log.confidence_used !== undefined
+                    ? `<span class="text-outline">· Confidence: ${Math.round(log.confidence_used * 100)}%</span>`
+                    : "";
+
+                return `
+                <div class="relative animate-fade-in-up" style="animation-delay: ${idx * 0.02}s">
+                    <!-- Timeline Dot -->
+                    <span class="absolute -left-[32px] top-0.5 w-5 h-5 rounded-full flex items-center justify-center border-2 border-white ${iconBg}">
+                        <span class="material-symbols-outlined text-[12px] font-bold">${icon}</span>
+                    </span>
+                    
+                    <div class="flex justify-between items-start gap-4">
+                        <div>
+                            <p class="text-[13px] font-semibold text-on-surface">${log.action_taken}</p>
+                            <div class="flex flex-wrap items-center gap-1.5 mt-1 text-[11px] text-on-surface-variant">
+                                <span>${time}</span>
+                                ${classificationBadge}
+                                ${confidenceText}
+                            </div>
+                        </div>
+                        <span class="text-[11px] font-medium px-2 py-0.5 rounded-full ${iconBg}">
+                            ${log.outcome}
+                        </span>
+                    </div>
+                </div>`;
+            }).join("");
+        }
+
         // ─── Polling Loop ───────────────────────────────────────
         async function poll() {
             try {
                 const res = await fetch("/api/metrics");
                 if (!res.ok) throw new Error("HTTP " + res.status);
                 const d = await res.json();
+
+                // Dynamic Session Selection Update
+                const select = document.getElementById("replay-session-select");
+                const currentSelection = select.value || "default";
+                const sessions = d.active_sessions || ["default"];
+                select.innerHTML = sessions.map(s => `<option value="${s}" ${s === currentSelection ? "selected" : ""}>${s}</option>`).join("");
+                
+                // Fetch Replay for currently selected session
+                fetchReplay();
 
                 // KPI Cards
                 document.getElementById("kpi-tokens").textContent = formatNumber(d.estimated_tokens_saved || 0);

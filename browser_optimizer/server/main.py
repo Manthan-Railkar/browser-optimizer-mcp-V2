@@ -11,7 +11,7 @@ from browser_optimizer.extractor.extractor import extractor
 from browser_optimizer.compressor.compressor import compressor
 from browser_optimizer.classifier.classifier import classifier as page_classifier
 from browser_optimizer.cache.cache import semantic_cache
-from browser_optimizer.cache.db import macro_store
+from browser_optimizer.cache.db import macro_store, session_replay_store
 from browser_optimizer.diff.diff import difference_engine
 from browser_optimizer.executor.executor import executor as action_executor
 from browser_optimizer.metrics.metrics import metrics
@@ -172,6 +172,13 @@ async def extract_context(url: str, session_id: str = "default") -> Dict[str, An
                 # ── Exact hash hit ────────────────────────────────
                 metrics.record_cache_hit()
                 classification = page_classifier.classify(cached_context)
+                session_replay_store.log_event(
+                    session_id=session_id,
+                    page_classification=classification.get("page_type") if classification else None,
+                    action_taken=f"extract_context: {url}",
+                    confidence_used=confidence,
+                    outcome="exact_cache_hit"
+                )
                 return {
                     "url": url,
                     "title": cached_context.get("title", ""),
@@ -201,6 +208,13 @@ async def extract_context(url: str, session_id: str = "default") -> Dict[str, An
                     extracted["raw_html_length"], compressed["compressed_length"]
                 )
 
+                session_replay_store.log_event(
+                    session_id=session_id,
+                    page_classification=classification.get("page_type") if classification else None,
+                    action_taken=f"extract_context: {url}",
+                    confidence_used=confidence,
+                    outcome=f"semantic_cache_hit (score: {similarity_score:.2f})"
+                )
                 return {
                     "url": url,
                     "title": compressed["title"],
@@ -231,6 +245,13 @@ async def extract_context(url: str, session_id: str = "default") -> Dict[str, An
         # 6. Record metrics
         metrics.record_compression(extracted["raw_html_length"], compressed["compressed_length"])
 
+        session_replay_store.log_event(
+            session_id=session_id,
+            page_classification=classification.get("page_type") if classification else None,
+            action_taken=f"extract_context: {url}",
+            confidence_used=None,
+            outcome="cache_miss"
+        )
         return {
             "url": url,
             "title": compressed["title"],
@@ -242,6 +263,13 @@ async def extract_context(url: str, session_id: str = "default") -> Dict[str, An
         }
     except Exception as e:
         logger.error(f"Error in extract_context: {str(e)}")
+        session_replay_store.log_event(
+            session_id=session_id,
+            page_classification=None,
+            action_taken=f"extract_context: {url}",
+            confidence_used=None,
+            outcome=f"error: {str(e)}"
+        )
         return {"success": False, "error": str(e)}
 
 
@@ -280,7 +308,24 @@ async def execute_action(
     try:
         page = await manager.get_page(session_id)
         url_before = page.url
+        
+        # Get page type from cache if available to tag log event
+        page_classification = None
+        cached_before = semantic_cache._cache.get(url_before)
+        if cached_before:
+            classification = page_classifier.classify(cached_before)
+            page_classification = classification.get("page_type")
+            
         result = await action_executor.execute(page, action, selector, value, session_id=session_id)
+        
+        outcome = "success" if result.get("success") else f"failed: {result.get('message')}"
+        session_replay_store.log_event(
+            session_id=session_id,
+            page_classification=page_classification,
+            action_taken=f"{action} {selector or ''} {value or ''}".strip(),
+            confidence_used=None,
+            outcome=outcome
+        )
         
         if result.get("success"):
             metrics.record_action()
@@ -291,6 +336,13 @@ async def execute_action(
         return result
     except Exception as e:
         logger.error(f"Error in execute_action: {str(e)}")
+        session_replay_store.log_event(
+            session_id=session_id,
+            page_classification=None,
+            action_taken=f"{action} {selector or ''} {value or ''}".strip(),
+            confidence_used=None,
+            outcome=f"error: {str(e)}"
+        )
         return {"success": False, "error": str(e)}
 
 
@@ -508,10 +560,24 @@ async def replay_skill(
     global suspended_replays
     macro = macro_store.get_macro(macro_id)
     if not macro:
+        session_replay_store.log_event(
+            session_id=session_id,
+            page_classification=None,
+            action_taken=f"replay_skill: id={macro_id}",
+            confidence_used=None,
+            outcome="failed: macro not found"
+        )
         return {"success": False, "message": f"Macro {macro_id} not found."}
         
     confidence = macro.get("confidence", 0.8)
     if confidence < 0.3:
+        session_replay_store.log_event(
+            session_id=session_id,
+            page_classification=macro.get("page_type"),
+            action_taken=f"replay_skill: {macro['name']}",
+            confidence_used=confidence,
+            outcome="aborted: confidence too low"
+        )
         return {
             "success": False,
             "message": f"Macro '{macro['name']}' confidence is too low ({confidence:.2f} < 0.3). Skipping macro replay. Please execute actions manually."
@@ -552,6 +618,20 @@ async def replay_skill(
                     "parameters": parameters
                 }
                 macro_store.update_confidence(macro_id, success=False)
+                session_replay_store.log_event(
+                    session_id=session_id,
+                    page_classification=macro.get("page_type"),
+                    action_taken=f"replay: {action} {selector or ''} {value or ''}".strip(),
+                    confidence_used=confidence,
+                    outcome=f"failed: {result.get('message')}"
+                )
+                session_replay_store.log_event(
+                    session_id=session_id,
+                    page_classification=macro.get("page_type"),
+                    action_taken=f"replay_skill: {macro['name']}",
+                    confidence_used=confidence,
+                    outcome=f"suspended at step {i}"
+                )
                 return {
                     "success": False,
                     "failed_step_index": i,
@@ -564,6 +644,13 @@ async def replay_skill(
                     )
                 }
                 
+            session_replay_store.log_event(
+                session_id=session_id,
+                page_classification=macro.get("page_type"),
+                action_taken=f"replay: {action} {selector or ''} {value or ''}".strip(),
+                confidence_used=confidence,
+                outcome="success"
+            )
             if verify_steps:
                 try:
                     await page.wait_for_load_state("domcontentloaded", timeout=2000)
@@ -582,6 +669,14 @@ async def replay_skill(
             current_url = page.url
             if expected_url and not current_url.startswith(expected_url):
                 macro_store.update_confidence(macro_id, success=False)
+                outcome_msg = f"verification_failed: URL mismatch (expected starting with {expected_url}, got {current_url})"
+                session_replay_store.log_event(
+                    session_id=session_id,
+                    page_classification=macro.get("page_type"),
+                    action_taken=f"replay_skill: {macro['name']}",
+                    confidence_used=confidence,
+                    outcome=outcome_msg
+                )
                 return {
                     "success": False, 
                     "message": f"Verification failed: Expected URL starting with {expected_url}, but got {current_url}",
@@ -598,6 +693,14 @@ async def replay_skill(
                 current_page_type = context.get("classification", {}).get("page_type")
                 if current_page_type != expected_page_type:
                     macro_store.update_confidence(macro_id, success=False)
+                    outcome_msg = f"verification_failed: Page type mismatch (expected {expected_page_type}, got {current_page_type})"
+                    session_replay_store.log_event(
+                        session_id=session_id,
+                        page_classification=macro.get("page_type"),
+                        action_taken=f"replay_skill: {macro['name']}",
+                        confidence_used=confidence,
+                        outcome=outcome_msg
+                    )
                     return {
                         "success": False, 
                         "message": f"Verification failed: Expected page type {expected_page_type}, but got {current_page_type}",
@@ -612,6 +715,13 @@ async def replay_skill(
         macro_store.update_confidence(macro_id, success=True)
         if session_id in suspended_replays and suspended_replays[session_id].get("macro_id") == macro_id:
             suspended_replays.pop(session_id, None)
+        session_replay_store.log_event(
+            session_id=session_id,
+            page_classification=macro.get("page_type"),
+            action_taken=f"replay_skill: {macro['name']}",
+            confidence_used=confidence,
+            outcome="macro_success"
+        )
         return {"success": True, "message": f"Successfully replayed macro '{macro['name']}'."}
         
     finally:
@@ -643,10 +753,18 @@ async def resume_skill(parameters: Optional[Dict[str, str]] = None, session_id: 
         suspended_replays.pop(session_id, None)
         return {"success": False, "message": f"Macro {macro_id} not found."}
         
+    confidence = macro.get("confidence", 0.8)
     sequence = macro["sequence"]
     if start_index >= len(sequence):
         macro_store.update_confidence(macro_id, success=True)
         suspended_replays.pop(session_id, None)
+        session_replay_store.log_event(
+            session_id=session_id,
+            page_classification=macro.get("page_type"),
+            action_taken=f"resume_skill: {macro['name']}",
+            confidence_used=confidence,
+            outcome="resume_success"
+        )
         return {"success": True, "message": f"Successfully finished replaying remaining steps of '{macro['name']}'."}
         
     page = await manager.get_page(session_id)
@@ -654,7 +772,6 @@ async def resume_skill(parameters: Optional[Dict[str, str]] = None, session_id: 
     if was_recording:
         action_executor.recordings.pop(session_id, None)
     
-    confidence = macro.get("confidence", 0.8)
     verify_steps = 0.3 <= confidence < 0.7
     
     logger.info(f"Resuming macro '{macro['name']}' from step {start_index} with params {original_parameters} in session '{session_id}'")
@@ -678,6 +795,20 @@ async def resume_skill(parameters: Optional[Dict[str, str]] = None, session_id: 
                 # Update suspension index to the next step
                 session_state["next_step_index"] = i + 1
                 macro_store.update_confidence(macro_id, success=False)
+                session_replay_store.log_event(
+                    session_id=session_id,
+                    page_classification=macro.get("page_type"),
+                    action_taken=f"resume: {action} {selector or ''} {value or ''}".strip(),
+                    confidence_used=confidence,
+                    outcome=f"failed: {result.get('message')}"
+                )
+                session_replay_store.log_event(
+                    session_id=session_id,
+                    page_classification=macro.get("page_type"),
+                    action_taken=f"resume_skill: {macro['name']}",
+                    confidence_used=confidence,
+                    outcome=f"suspended at step {i}"
+                )
                 return {
                     "success": False,
                     "failed_step_index": i,
@@ -689,6 +820,13 @@ async def resume_skill(parameters: Optional[Dict[str, str]] = None, session_id: 
                     )
                 }
                 
+            session_replay_store.log_event(
+                session_id=session_id,
+                page_classification=macro.get("page_type"),
+                action_taken=f"resume: {action} {selector or ''} {value or ''}".strip(),
+                confidence_used=confidence,
+                outcome="success"
+            )
             if verify_steps:
                 try:
                     await page.wait_for_load_state("domcontentloaded", timeout=2000)
@@ -698,6 +836,13 @@ async def resume_skill(parameters: Optional[Dict[str, str]] = None, session_id: 
         # All steps completed successfully
         macro_store.update_confidence(macro_id, success=True)
         suspended_replays.pop(session_id, None)
+        session_replay_store.log_event(
+            session_id=session_id,
+            page_classification=macro.get("page_type"),
+            action_taken=f"resume_skill: {macro['name']}",
+            confidence_used=confidence,
+            outcome="resume_success"
+        )
         return {"success": True, "message": f"Successfully finished replaying remaining steps of '{macro['name']}'."}
         
     finally:
@@ -745,6 +890,16 @@ async def stop_watch_page(session_id: str = "default") -> Dict[str, Any]:
         watch_tasks.pop(session_id, None)
         return {"success": True, "message": f"Stopped watching page in session '{session_id}'."}
     return {"success": False, "message": f"No active page watch found for session '{session_id}'."}
+
+
+@mcp.tool()
+async def get_session_replay(session_id: str = "default") -> Dict[str, Any]:
+    """
+    Retrieve the append-only replay log of page states and actions taken for a given session.
+    """
+    logs = session_replay_store.get_replay(session_id)
+    return {"success": True, "session_id": session_id, "logs": logs}
+
 
 
 

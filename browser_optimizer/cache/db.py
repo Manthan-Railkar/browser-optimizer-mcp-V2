@@ -7,7 +7,7 @@ import sqlite3
 import json
 import time
 from pathlib import Path
-from typing import Any, List, Optional, Tuple
+from typing import Any, List, Optional, Tuple, Dict
 from browser_optimizer.utils.logger import logger
 
 class SQLiteCache:
@@ -268,4 +268,69 @@ class MacroStore:
                 ''', (confidence, success_count, fail_count, macro_id))
                 conn.commit()
 
+
+class SessionReplayStore:
+    """
+    Persistent append-only log for lightweight session replays.
+    Logs each (timestamp, page_classification, action_taken, confidence_used, outcome) tuple.
+    """
+    def __init__(self, db_path: str = "cache.db"):
+        self.db_path = db_path
+        self._init_db()
+
+    def _init_db(self):
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS session_replay (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT,
+                    timestamp REAL,
+                    page_classification TEXT,
+                    action_taken TEXT,
+                    confidence_used REAL,
+                    outcome TEXT
+                )
+            ''')
+            conn.commit()
+
+    def log_event(self, session_id: str, page_classification: Optional[str], action_taken: str, confidence_used: Optional[float], outcome: str):
+        timestamp = time.time()
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute('''
+                INSERT INTO session_replay (session_id, timestamp, page_classification, action_taken, confidence_used, outcome)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (session_id, timestamp, page_classification, action_taken, confidence_used, outcome))
+            conn.commit()
+
+    def get_replay(self, session_id: str) -> List[Dict[str, Any]]:
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                "SELECT timestamp, page_classification, action_taken, confidence_used, outcome "
+                "FROM session_replay WHERE session_id = ? ORDER BY id ASC", (session_id,)
+            )
+            rows = cursor.fetchall()
+            return [
+                {
+                    "timestamp": r[0],
+                    "page_classification": r[1],
+                    "action_taken": r[2],
+                    "confidence_used": r[3],
+                    "outcome": r[4]
+                }
+                for r in rows
+            ]
+
+    def clear_replay(self, session_id: str):
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("DELETE FROM session_replay WHERE session_id = ?", (session_id,))
+            conn.commit()
+
+    def clear_all(self):
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("DELETE FROM session_replay")
+            conn.commit()
+
+
 macro_store = MacroStore()
+session_replay_store = SessionReplayStore()
+

@@ -12,7 +12,8 @@ from browser_optimizer.server.main import (
     stop_watch_page,
     watch_clients,
     watch_tasks,
-    page_diff
+    page_diff,
+    extract_context
 )
 
 
@@ -35,6 +36,12 @@ async def setup_websocket_server(monkeypatch):
         async def title(self):
             return "Watch Page"
         async def wait_for_load_state(self, state, timeout=None):
+            pass
+        async def content(self):
+            return "<html></html>"
+        async def wait_for_selector(self, selector, timeout=None):
+            pass
+        async def click(self, selector):
             pass
 
     async def mock_get_page(session_id="default"):
@@ -59,6 +66,10 @@ async def setup_websocket_server(monkeypatch):
         }
 
     monkeypatch.setattr("browser_optimizer.server.main.page_diff", mock_page_diff)
+
+    # Clear cache
+    from browser_optimizer.cache.cache import semantic_cache
+    semantic_cache.clear()
 
     # Start the server (launches websocket server)
     await startup()
@@ -145,3 +156,50 @@ async def test_session_isolated_pushes():
 
             # Clean up
             await stop_watch_page("sessionA")
+
+
+@pytest.mark.anyio
+async def test_session_replay_logging():
+    """Verify that events are logged to session_replay_store during extract_context and execute_action."""
+    from browser_optimizer.cache.db import session_replay_store
+    from browser_optimizer.server.main import execute_action
+
+    session_replay_store.clear_all()
+
+    # Trigger extract_context (cache miss log)
+    await extract_context("https://example.com/watch", session_id="sessionR")
+    
+    # Verify log entry in sessionR
+    logs = session_replay_store.get_replay("sessionR")
+    assert len(logs) == 1
+    assert "extract_context" in logs[0]["action_taken"]
+    assert logs[0]["outcome"] == "cache_miss"
+
+    # Trigger execute_action (manual action log)
+    await execute_action("click", "#btn", None, "sessionR")
+
+    # Verify log entry
+    logs = session_replay_store.get_replay("sessionR")
+    assert len(logs) == 2
+    assert logs[1]["action_taken"] == "click #btn"
+    assert logs[1]["outcome"] == "success"
+
+
+@pytest.mark.anyio
+async def test_session_replay_api():
+    """Verify that get_session_replay tool returns the session's logs correctly."""
+    from browser_optimizer.cache.db import session_replay_store
+    from browser_optimizer.server.main import get_session_replay
+
+    session_replay_store.clear_all()
+    session_replay_store.log_event("sessionT", "PRODUCT", "click #buy", 0.95, "success")
+
+    res = await get_session_replay("sessionT")
+    assert res["success"] is True
+    assert res["session_id"] == "sessionT"
+    assert len(res["logs"]) == 1
+    assert res["logs"][0]["action_taken"] == "click #buy"
+    assert res["logs"][0]["page_classification"] == "PRODUCT"
+    assert res["logs"][0]["confidence_used"] == 0.95
+    assert res["logs"][0]["outcome"] == "success"
+

@@ -28,6 +28,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/api/metrics":
             self._serve_metrics()
+        elif self.path.startswith("/api/replay"):
+            self._serve_replay()
         elif self.path == "/" or self.path == "/index.html":
             self._serve_dashboard()
         else:
@@ -54,12 +56,37 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         stats["macros"] = macro_summary
         stats["macro_count"] = len(all_macros)
 
+        # Include list of active session IDs
+        from browser_optimizer.browser.manager import manager
+        active_ids = list(manager.sessions.keys())
+        if "default" not in active_ids:
+            active_ids.append("default")
+        stats["active_sessions"] = active_ids
+
         # Estimated cost savings (rough: $0.002 per 1K tokens, ~4 chars per token)
         tokens_saved = stats.get("bytes_saved_total", 0) / 4
         stats["estimated_tokens_saved"] = int(tokens_saved)
         stats["estimated_cost_saved_usd"] = round(tokens_saved / 1000 * 0.002, 4)
 
         body = json.dumps(stats).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_replay(self):
+        """Return the session replay events as JSON."""
+        from urllib.parse import urlparse, parse_qs
+        parsed = urlparse(self.path)
+        params = parse_qs(parsed.query)
+        session_id = params.get("session_id", ["default"])[0]
+
+        from browser_optimizer.cache.db import session_replay_store
+        replay_events = session_replay_store.get_replay(session_id)
+
+        body = json.dumps(replay_events).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Access-Control-Allow-Origin", "*")
