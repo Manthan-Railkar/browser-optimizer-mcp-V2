@@ -12,6 +12,20 @@ class RuleBasedExecutor:
     Executes standard actions directly on a Playwright Page.
     Handles selectors, keystrokes, drop-down options, scrolling, and waits with automated timeouts.
     """
+    def __init__(self):
+        self.recording = False
+        self._current_sequence = []
+
+    def start_recording(self):
+        self.recording = True
+        self._current_sequence = []
+
+    def stop_recording(self) -> list:
+        self.recording = False
+        seq = self._current_sequence
+        self._current_sequence = []
+        return seq
+
     async def execute(self, page: Page, action: str, selector: Optional[str] = None, value: Optional[str] = None) -> Dict[str, Any]:
         """
         Execute a deterministic browser action on the current page.
@@ -28,33 +42,39 @@ class RuleBasedExecutor:
         action = action.lower().strip()
         logger.info(f"Executing action: {action} | Selector: {selector} | Value: {value}")
 
+        result = {"success": False, "message": "Unknown error"}
+
         try:
             if action == "navigate":
                 if not value:
-                    return {"success": False, "message": "Navigation requires a 'value' parameter containing the URL."}
-                await page.goto(value, wait_until="domcontentloaded")
-                return {"success": True, "message": f"Successfully navigated to {value}", "url": page.url}
+                    result = {"success": False, "message": "Navigation requires a 'value' parameter containing the URL."}
+                else:
+                    await page.goto(value, wait_until="domcontentloaded")
+                    result = {"success": True, "message": f"Successfully navigated to {value}", "url": page.url}
 
             elif action == "click":
                 if not selector:
-                    return {"success": False, "message": "Click action requires a 'selector' parameter."}
-                await page.wait_for_selector(selector, timeout=5000)
-                await page.click(selector)
-                return {"success": True, "message": f"Successfully clicked element {selector}"}
+                    result = {"success": False, "message": "Click action requires a 'selector' parameter."}
+                else:
+                    await page.wait_for_selector(selector, timeout=5000)
+                    await page.click(selector)
+                    result = {"success": True, "message": f"Successfully clicked element {selector}"}
 
             elif action == "type" or action == "fill":
                 if not selector or value is None:
-                    return {"success": False, "message": "Type/Fill action requires both 'selector' and 'value' parameters."}
-                await page.wait_for_selector(selector, timeout=5000)
-                await page.fill(selector, value)
-                return {"success": True, "message": f"Successfully typed '{value}' into {selector}"}
+                    result = {"success": False, "message": "Type/Fill action requires both 'selector' and 'value' parameters."}
+                else:
+                    await page.wait_for_selector(selector, timeout=5000)
+                    await page.fill(selector, value)
+                    result = {"success": True, "message": f"Successfully typed '{value}' into {selector}"}
 
             elif action == "select":
                 if not selector or not value:
-                    return {"success": False, "message": "Select action requires both 'selector' and 'value' parameters."}
-                await page.wait_for_selector(selector, timeout=5000)
-                await page.select_option(selector, value=value)
-                return {"success": True, "message": f"Successfully selected option '{value}' in {selector}"}
+                    result = {"success": False, "message": "Select action requires both 'selector' and 'value' parameters."}
+                else:
+                    await page.wait_for_selector(selector, timeout=5000)
+                    await page.select_option(selector, value=value)
+                    result = {"success": True, "message": f"Successfully selected option '{value}' in {selector}"}
 
             elif action == "scroll":
                 direction = (value or "down").lower().strip()
@@ -62,20 +82,29 @@ class RuleBasedExecutor:
                     await page.evaluate("window.scrollBy(0, -500)")
                 else:
                     await page.evaluate("window.scrollBy(0, 500)")
-                return {"success": True, "message": f"Successfully scrolled {direction}"}
+                result = {"success": True, "message": f"Successfully scrolled {direction}"}
 
             elif action == "wait":
                 wait_time = int(value or "1000")
                 await page.wait_for_timeout(wait_time)
-                return {"success": True, "message": f"Successfully waited for {wait_time}ms"}
+                result = {"success": True, "message": f"Successfully waited for {wait_time}ms"}
 
             else:
-                return {"success": False, "message": f"Unknown action: {action}"}
+                result = {"success": False, "message": f"Unknown action: {action}"}
 
         except Exception as e:
             error_msg = f"Failed to execute action '{action}' on '{selector or value}': {str(e)}"
             logger.error(error_msg)
-            return {"success": False, "message": error_msg}
+            result = {"success": False, "message": error_msg}
+
+        if result.get("success") and self.recording:
+            self._current_sequence.append({
+                "action": action,
+                "selector": selector,
+                "value": value
+            })
+
+        return result
 
 # Shared executor instance
 executor = RuleBasedExecutor()

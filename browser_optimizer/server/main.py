@@ -9,6 +9,7 @@ from browser_optimizer.extractor.extractor import extractor
 from browser_optimizer.compressor.compressor import compressor
 from browser_optimizer.classifier.classifier import classifier as page_classifier
 from browser_optimizer.cache.cache import semantic_cache
+from browser_optimizer.cache.db import macro_store
 from browser_optimizer.diff.diff import difference_engine
 from browser_optimizer.executor.executor import executor as action_executor
 from browser_optimizer.metrics.metrics import metrics
@@ -292,6 +293,97 @@ def get_metrics() -> Dict[str, Any]:
     Retrieve performance and token optimization metrics.
     """
     return metrics.get_stats()
+
+
+@mcp.tool()
+async def start_macro_recording() -> Dict[str, Any]:
+    """
+    Start recording a sequence of browser actions to create a reusable skill macro.
+    """
+    action_executor.start_recording()
+    return {"success": True, "message": "Started recording macro actions."}
+
+
+@mcp.tool()
+async def save_macro(name: str, page_type: str, parameters_map: Dict[str, str]) -> Dict[str, Any]:
+    """
+    Stop recording and save the macro. 
+    parameters_map: A dictionary of key: value mapping for parameter extraction. 
+    e.g. {"username": "testuser", "password": "mypassword"}.
+    The executor will replace instances of "testuser" with "{username}" in the saved sequence.
+    """
+    sequence = action_executor.stop_recording()
+    if not sequence:
+        return {"success": False, "message": "No actions recorded."}
+        
+    # Parameterize the sequence
+    for step in sequence:
+        val = step.get("value")
+        if val:
+            for param_key, param_value in parameters_map.items():
+                if val == param_value:
+                    step["value"] = f"{{{param_key}}}"
+                    break
+                    
+    macro_id = macro_store.save_macro(name, page_type, sequence)
+    return {"success": True, "macro_id": macro_id, "message": f"Macro '{name}' saved with {len(sequence)} steps."}
+
+
+@mcp.tool()
+async def list_skills(page_type: Optional[str] = None) -> Dict[str, Any]:
+    """
+    List available skill macros, optionally filtered by page_type (e.g. LOGIN).
+    """
+    macros = macro_store.list_macros(page_type)
+    return {"success": True, "macros": macros}
+
+
+@mcp.tool()
+async def replay_skill(macro_id: int, parameters: Dict[str, str]) -> Dict[str, Any]:
+    """
+    Replay a previously recorded macro.
+    Inject parameters into the placeholders (e.g. {username}) before execution.
+    """
+    macro = macro_store.get_macro(macro_id)
+    if not macro:
+        return {"success": False, "message": f"Macro {macro_id} not found."}
+        
+    sequence = macro["sequence"]
+    
+    logger.info(f"Replaying macro '{macro['name']}' with params {parameters}")
+    
+    page = await manager.get_page()
+    
+    # Temporarily disable recording if it was on
+    was_recording = action_executor.recording
+    action_executor.recording = False
+    
+    success_count = 0
+    try:
+        for step in sequence:
+            action = step["action"]
+            selector = step["selector"]
+            value = step.get("value")
+            
+            # Inject parameters
+            if value and isinstance(value, str):
+                for pk, pv in parameters.items():
+                    placeholder = f"{{{pk}}}"
+                    if placeholder in value:
+                        value = value.replace(placeholder, pv)
+            
+            result = await action_executor.execute(page, action, selector, value)
+            if not result.get("success"):
+                macro_store.update_confidence(macro_id, success=False)
+                return {"success": False, "message": f"Macro failed at step {success_count}: {result.get('message')}"}
+                
+            success_count += 1
+            
+        macro_store.update_confidence(macro_id, success=True)
+        return {"success": True, "message": f"Successfully replayed macro '{macro['name']}'."}
+        
+    finally:
+        action_executor.recording = was_recording
 
 
 async def main():
