@@ -1,0 +1,13 @@
+venv/
+.env
+__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+htmlcov/
+*.log
+
+# PyPI build artifacts
+dist/
+build/
+*.egg-info/

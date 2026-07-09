@@ -1,0 +1,64 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "browser-optimizer-mcp"
+version = "0.1.2"
+description = "Browser Optimizer MCP — reduces LLM token usage by 80-98% for browser automation"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "Manthan Railkar"},
+    {name = "Ayush Mhatre"}
+]
+requires-python = ">=3.11"
+keywords = [
+    "mcp",
+    "browser",
+    "playwright",
+    "llm",
+    "ai-agent",
+    "automation",
+    "token-optimization",
+    "fastmcp",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Internet :: WWW/HTTP :: Browsers",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "playwright>=1.40.0",
+    "mcp>=1.0.0",
+    "beautifulsoup4>=4.12.0",
+    "httpx>=0.25.0",
+    "loguru>=0.7.0",
+    "lxml>=4.9.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "python-dotenv>=1.0.0",
+    "xxhash>=3.0.0",
+    "cachetools>=5.0.0",
+]
+
+[project.scripts]
+browser-optimizer = "browser_optimizer.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/yourusername/browser-optimizer-mcp"
+Repository = "https://github.com/yourusername/browser-optimizer-mcp"
+"Bug Tracker" = "https://github.com/yourusername/browser-optimizer-mcp/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["browser_optimizer*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
