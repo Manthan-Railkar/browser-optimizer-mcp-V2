@@ -22,6 +22,7 @@ class Settings:
     REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
     BROWSER_TIMEOUT = int(os.getenv("BROWSER_TIMEOUT", "30000"))
     SIMILARITY_THRESHOLD = float(os.getenv("SIMILARITY_THRESHOLD", "0.9"))
+    CLASSIFICATION_THRESHOLD = float(os.getenv("CLASSIFICATION_THRESHOLD", "0.65"))
 
 
 # Instantiated settings for export

@@ -11,3 +11,10 @@ htmlcov/
 dist/
 build/
 *.egg-info/
+
+# Jupyter notebooks
+.ipynb_checkpoints/
+
+# Generated model evaluation plots
+models/plots/
+
