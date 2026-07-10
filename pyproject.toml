@@ -63,3 +63,7 @@ include = ["browser_optimizer*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.pyrefly]
+project-includes = ["browser_optimizer", "tests", "scripts", "training"]
+search-path = ["."]

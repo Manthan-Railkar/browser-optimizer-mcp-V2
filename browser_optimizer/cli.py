@@ -12,6 +12,16 @@ Commands:
 
 import sys
 
+# Reconfigure stdout/stderr to UTF-8 on Windows to avoid UnicodeEncodeError in non-UTF-8 terminals
+if sys.platform.startswith("win"):
+    try:
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8")
+        if hasattr(sys.stderr, "reconfigure"):
+            sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
 
 # ─────────────────────────────────────────────────────────────
 # Colour helpers (zero dependencies)

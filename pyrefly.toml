@@ -1,0 +1,5 @@
+# Pyrefly Configuration File
+# Configures import roots and project includes for Meta's Pyrefly type checker
+
+project-includes = ["browser_optimizer", "tests", "scripts", "training"]
+search-path = ["."]
