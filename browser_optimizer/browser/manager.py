@@ -3,10 +3,11 @@ Browser management module using Playwright.
 Handles launching, session contexts, page management, and teardown.
 """
 
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 from playwright.async_api import async_playwright, Playwright, Browser, BrowserContext, Page
 from browser_optimizer.config.settings import settings
 from browser_optimizer.utils.logger import logger
+from browser_optimizer.cache.db import session_state_store
 
 
 class BrowserManager:
@@ -24,6 +25,9 @@ class BrowserManager:
         Launch the Chromium instance in headless/headed mode according to settings.
         Initializes the async Playwright driver.
         """
+        if self.browser is not None:
+            logger.info("Browser already started or mocked.")
+            return
         logger.info("Starting Browser...")
         self.playwright = await async_playwright().start()
         self.browser = await self.playwright.chromium.launch(
@@ -44,6 +48,8 @@ class BrowserManager:
         if self.playwright:
             await self.playwright.stop()
         self.sessions.clear()
+        self.browser = None
+        self.playwright = None
         logger.info("Chromium Stopped")
 
     async def get_page(self, session_id: str = "default") -> Page:
@@ -58,7 +64,19 @@ class BrowserManager:
             if self.browser is None:
                 raise RuntimeError("Browser not started. Call start() first.")
             logger.info(f"Initializing new isolated BrowserContext for session: {session_id}")
-            context = await self.browser.new_context()
+            
+            state: Any = None
+            try:
+                state = session_state_store.get_state(session_id)
+                if state:
+                    logger.info(f"Restoring previous session state for '{session_id}'")
+            except Exception as e:
+                logger.warning(f"Failed to load session state for '{session_id}': {e}")
+
+            if state:
+                context = await self.browser.new_context(storage_state=state)
+            else:
+                context = await self.browser.new_context()
             page = await context.new_page()
             self.sessions[session_id] = (context, page)
         return self.sessions[session_id][1]
@@ -76,13 +94,29 @@ class BrowserManager:
         """
         page = await self.get_page(session_id)
         await page.goto(url, timeout=settings.BROWSER_TIMEOUT, wait_until="domcontentloaded")
+        await self.save_session_state(session_id)
         return page
+
+    async def save_session_state(self, session_id: str):
+        """
+        Save the browser context storage state for the session to the database.
+        """
+        if session_id in self.sessions:
+            context, page = self.sessions[session_id]
+            if not page.is_closed():
+                try:
+                    state = await context.storage_state()
+                    session_state_store.save_state(session_id, state)
+                    logger.info(f"Saved session state for '{session_id}' to database.")
+                except Exception as e:
+                    logger.warning(f"Failed to save session state for '{session_id}': {e}")
 
     async def close_session(self, session_id: str):
         """
         Close page and BrowserContext for a specific session.
         """
         if session_id in self.sessions:
+            await self.save_session_state(session_id)
             logger.info(f"Closing BrowserContext for session: {session_id}")
             context, page = self.sessions[session_id]
             try:
@@ -95,4 +129,4 @@ class BrowserManager:
 
 
 # Shared manager instance
-manager = BrowserManager()
+manager = BrowserManager()

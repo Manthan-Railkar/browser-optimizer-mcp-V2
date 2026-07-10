@@ -344,6 +344,57 @@ class SessionReplayStore:
             conn.commit()
 
 
+class SessionStateStore:
+    """
+    Persistent store for browser context session states (cookies, localStorage, etc.).
+    """
+    def __init__(self, db_path: str = "cache.db"):
+        self.db_path = db_path
+        self._init_db()
+
+    def _init_db(self):
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS session_states (
+                    session_id TEXT PRIMARY KEY,
+                    state_json TEXT,
+                    updated_at REAL
+                )
+            ''')
+            conn.commit()
+
+    def save_state(self, session_id: str, state: Any):
+        state_json = json.dumps(state)
+        updated_at = time.time()
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute('''
+                INSERT INTO session_states (session_id, state_json, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(session_id) DO UPDATE SET
+                    state_json=excluded.state_json,
+                    updated_at=excluded.updated_at
+            ''', (session_id, state_json, updated_at))
+            conn.commit()
+
+    def get_state(self, session_id: str) -> Optional[dict]:
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("SELECT state_json FROM session_states WHERE session_id = ?", (session_id,))
+            row = cursor.fetchone()
+            if row:
+                try:
+                    return json.loads(row[0])
+                except json.JSONDecodeError:
+                    return None
+        return None
+
+    def clear_state(self, session_id: str):
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("DELETE FROM session_states WHERE session_id = ?", (session_id,))
+            conn.commit()
+
+
 macro_store = MacroStore()
 session_replay_store = SessionReplayStore()
+session_state_store = SessionStateStore()
+
 

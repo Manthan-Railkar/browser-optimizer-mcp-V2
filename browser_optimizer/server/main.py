@@ -104,6 +104,8 @@ async def startup():
 async def shutdown():
     """Clean up browser session and active watchers on server shutdown."""
     global ws_server, watch_tasks
+    if not _initialized:
+        return
     logger.info("Shutting down Browser Optimizer MCP server...")
     
     # Cancel all running watch tasks
@@ -122,6 +124,31 @@ async def shutdown():
     logger.info("Server shutdown complete.")
 
 
+_initialized = False
+_init_lock = asyncio.Lock()
+
+
+async def ensure_initialized():
+    """Ensure browser, websockets, and dashboard are running on-demand."""
+    global _initialized
+    if _initialized:
+        return
+    async with _init_lock:
+        if _initialized:
+            return
+        import sys
+        if "pytest" in sys.modules or "unittest" in sys.modules:
+            _initialized = True
+            return
+        if ws_server is not None or manager.browser is not None:
+            _initialized = True
+            return
+        logger.info("Initializing Browser Optimizer (on-demand)...")
+        await startup()
+        start_dashboard_server()
+        _initialized = True
+
+
 @mcp.tool()
 async def extract_context(url: str, session_id: str = "default") -> Dict[str, Any]:
     """
@@ -133,6 +160,7 @@ async def extract_context(url: str, session_id: str = "default") -> Dict[str, An
       2. Semantic hit     → extract fresh UI elements but reuse cached classification.
       3. Full miss        → full extract → compress → classify pipeline.
     """
+    await ensure_initialized()
     try:
         # 1. Get page and check cache if enabled
         page = await manager.get_page(session_id)
@@ -308,6 +336,7 @@ async def execute_action(
     """
     Execute a browser action (click, type, select, scroll, wait, navigate) using Playwright.
     """
+    await ensure_initialized()
     try:
         page = await manager.get_page(session_id)
         url_before = page.url
@@ -320,6 +349,9 @@ async def execute_action(
             page_classification = classification.get("page_type")
             
         result = await action_executor.execute(page, action, selector, value, session_id=session_id)
+        
+        # Save session state after executing the action
+        await manager.save_session_state(session_id)
         
         outcome = "success" if result.get("success") else f"failed: {result.get('message')}"
         session_replay_store.log_event(
@@ -423,6 +455,7 @@ async def wait_until_ready(url: str, timeout: Optional[int] = None, session_id: 
     """
     Navigate to a page and wait for the DOM content to be loaded and network to stabilize.
     """
+    await ensure_initialized()
     try:
         page = await manager.get_page(session_id)
         wait_timeout = timeout or settings.BROWSER_TIMEOUT
@@ -430,6 +463,7 @@ async def wait_until_ready(url: str, timeout: Optional[int] = None, session_id: 
         logger.info(f"Navigating to {url} and waiting up to {wait_timeout}ms for readiness...")
         await page.goto(url, timeout=wait_timeout, wait_until="networkidle")
         
+        await manager.save_session_state(session_id)
         return {"success": True, "message": "Page is stable and loaded.", "url": page.url}
     except Exception as e:
         logger.error(f"Error in wait_until_ready: {str(e)}")
@@ -470,6 +504,7 @@ async def start_macro_recording(session_id: str = "default") -> Dict[str, Any]:
     """
     Start recording a sequence of browser actions to create a reusable skill macro.
     """
+    await ensure_initialized()
     action_executor.start_recording(session_id)
     return {"success": True, "message": f"Started recording macro actions for session '{session_id}'."}
 
@@ -560,6 +595,7 @@ async def replay_skill(
     Inject parameters into the placeholders (e.g. {username}) before execution.
     If expected_url or expected_page_type are provided, the system will verify the post-state and auto-decay on mismatch.
     """
+    await ensure_initialized()
     global suspended_replays
     macro = macro_store.get_macro(macro_id)
     if not macro:
@@ -728,6 +764,7 @@ async def replay_skill(
         return {"success": True, "message": f"Successfully replayed macro '{macro['name']}'."}
         
     finally:
+        await manager.save_session_state(session_id)
         if was_recording:
             action_executor.start_recording(session_id)
 
@@ -738,6 +775,7 @@ async def resume_skill(parameters: Optional[Dict[str, str]] = None, session_id: 
     Resume a suspended macro replay from the step following the failure for the given session.
     Optional parameters can override/update parameters if needed.
     """
+    await ensure_initialized()
     global suspended_replays
     if session_id not in suspended_replays:
         return {"success": False, "message": f"No suspended macro replay found for session '{session_id}'."}
@@ -849,6 +887,7 @@ async def resume_skill(parameters: Optional[Dict[str, str]] = None, session_id: 
         return {"success": True, "message": f"Successfully finished replaying remaining steps of '{macro['name']}'."}
         
     finally:
+        await manager.save_session_state(session_id)
         if was_recording:
             action_executor.start_recording(session_id)
 
@@ -869,6 +908,7 @@ async def watch_page(url: str, interval_seconds: int = 5, session_id: str = "def
     Start polling a page's visual changes at a regular interval and pushing them
     automatically to connected WebSocket clients registered for that session.
     """
+    await ensure_initialized()
     global watch_tasks
     # Cancel existing watch task for this session if any
     if session_id in watch_tasks:
@@ -952,8 +992,6 @@ mcp.list_tools = new_list_tools
 
 
 async def main():
-    await startup()
-    start_dashboard_server()
     try:
         await mcp.run_stdio_async()
     finally:

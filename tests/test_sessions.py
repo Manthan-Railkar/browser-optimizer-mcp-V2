@@ -155,3 +155,75 @@ async def test_session_isolated_suspension_states():
     resume_b = await resume_skill({}, "sessionB")
     assert resume_b["success"] is True
     assert "sessionB" not in suspended_replays
+
+
+@pytest.mark.anyio
+async def test_session_state_persistence(monkeypatch):
+    """Test that session context storage state is saved to the SQLite store and restored on new context initialization."""
+    from browser_optimizer.cache.db import session_state_store
+    
+    # Clear any existing state for test session
+    session_state_store.clear_state("test-persist-session")
+    
+    dummy_state = {"cookies": [{"name": "session_id", "value": "xyz123", "domain": "example.com", "path": "/"}]}
+    
+    # We will mock the BrowserContext and Page to support storage_state() and tracking of calls to new_context()
+    class MockContext:
+        def __init__(self, storage_state=None):
+            self.storage_state_arg = storage_state
+            self.is_closed = False
+        async def new_page(self):
+            class DummyPage:
+                url = "about:blank"
+                async def goto(self, url, timeout=None, wait_until=None):
+                    pass
+                def is_closed(self):
+                    return False
+                async def close(self):
+                    pass
+            return DummyPage()
+        async def storage_state(self):
+            return dummy_state
+        async def close(self):
+            self.is_closed = True
+
+    created_contexts = []
+
+    class MockBrowser:
+        async def new_context(self, storage_state=None):
+            ctx = MockContext(storage_state=storage_state)
+            created_contexts.append(ctx)
+            return ctx
+        async def close(self):
+            pass
+
+    # Use the mock browser in manager
+    monkeypatch.setattr(manager, "browser", MockBrowser())
+    
+    # 1. First get page (should have no storage state)
+    page1 = await manager.get_page("test-persist-session")
+    assert "test-persist-session" in manager.sessions
+    context1 = manager.sessions["test-persist-session"][0]
+    assert getattr(context1, "storage_state_arg", None) is None
+    
+    # 2. Trigger navigate (should save state to DB)
+    await manager.navigate("https://example.com", "test-persist-session")
+    
+    # Verify state was saved to the store
+    saved = session_state_store.get_state("test-persist-session")
+    assert saved == dummy_state
+    
+    # 3. Close the session (should save state and remove from manager.sessions)
+    await manager.close_session("test-persist-session")
+    assert "test-persist-session" not in manager.sessions
+    
+    # 4. Open the session again (should restore the storage state)
+    page2 = await manager.get_page("test-persist-session")
+    assert "test-persist-session" in manager.sessions
+    context2 = manager.sessions["test-persist-session"][0]
+    assert getattr(context2, "storage_state_arg", None) == dummy_state
+    
+    # Clean up
+    session_state_store.clear_state("test-persist-session")
+
+
