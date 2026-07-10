@@ -137,7 +137,7 @@ async def ensure_initialized():
         if _initialized:
             return
         import sys
-        if "pytest" in sys.modules or "unittest" in sys.modules:
+        if "pytest" in sys.modules:
             _initialized = True
             return
         if ws_server is not None or manager.browser is not None:
