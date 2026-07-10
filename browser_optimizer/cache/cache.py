@@ -78,7 +78,8 @@ class SemanticCache:
                 cached_hash = cached_entry.get("hash")
                 if cached_hash == current_hash:
                     logger.info(f"Cache EXACT HIT for URL: {url}")
-                    ctx = dict(cached_entry.get("context"))
+                    raw_context = cached_entry.get("context") or {}
+                    ctx = dict(raw_context)
                     ctx["confidence"] = confidence
                     return ctx
                 else:
@@ -140,7 +141,7 @@ class SemanticCache:
                 best_url = stored_url
                 best_confidence = stored_value.get("confidence", 0.8)
 
-        if best_score >= self.similarity_threshold and best_context is not None:
+        if best_score >= self.similarity_threshold and best_context is not None and best_url is not None:
             return (best_context, best_score, best_url, best_confidence)
 
         return None

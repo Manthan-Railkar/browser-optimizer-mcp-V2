@@ -95,9 +95,13 @@ class RuleBasedExecutor:
                 result = {"success": True, "message": f"Successfully scrolled {direction}"}
 
             elif action == "wait":
-                wait_time = int(value or "1000")
-                await page.wait_for_timeout(wait_time)
-                result = {"success": True, "message": f"Successfully waited for {wait_time}ms"}
+                try:
+                    wait_time = int(value or "1000")
+                except ValueError:
+                    result = {"success": False, "message": f"Wait action requires a numeric 'value' (milliseconds), got: '{value}'."}
+                else:
+                    await page.wait_for_timeout(wait_time)
+                    result = {"success": True, "message": f"Successfully waited for {wait_time}ms"}
 
             else:
                 result = {"success": False, "message": f"Unknown action: {action}"}

@@ -5,8 +5,9 @@ Loads the trained LightGBM model and handles predictions with a confidence thres
 
 import os
 import joblib
+import numpy as np
 import pandas as pd
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Optional, Tuple
 from browser_optimizer.utils.logger import logger
 from browser_optimizer.classifier.feature_extractor import FeatureExtractor, FEATURE_COLUMNS
 from browser_optimizer.config.settings import settings
@@ -60,13 +61,13 @@ class PageClassifierPredictor:
             logger.info("Page classifier assets loaded successfully.")
         except Exception as e:
             logger.error(f"Failed to load page classifier assets: {e}")
-            raise e
+            raise
 
     def __init__(self):
         self.feature_extractor = FeatureExtractor()
         self.load_assets()
 
-    def predict(self, context: Dict[str, Any], threshold: float = None) -> Tuple[str, float, Dict[str, float]]:
+    def predict(self, context: Dict[str, Any], threshold: Optional[float] = None) -> Tuple[str, float, Dict[str, float]]:
         """
         Predict the page category along with confidence score and probabilities.
         
@@ -80,6 +81,9 @@ class PageClassifierPredictor:
         if threshold is None:
             # Safely fetch setting, fall back to 0.65 if not defined on settings yet
             threshold = getattr(settings, "CLASSIFICATION_THRESHOLD", 0.65)
+
+        if self._model is None or self._label_encoder is None or self._feature_names is None:
+            raise RuntimeError("Page classifier assets are not loaded. Call load_assets() first.")
 
         # 1. Extract raw numerical features
         features = self.feature_extractor.extract_features(context)
@@ -95,15 +99,16 @@ class PageClassifierPredictor:
         except Exception as e:
             logger.error(f"Inference failed: {e}")
             # Safe fallback in case of prediction failure
-            probs = [0.0] * len(self._label_encoder.classes_)
-            probs[list(self._label_encoder.classes_).index("UNKNOWN")] = 1.0
+            fallback = [0.0] * len(self._label_encoder.classes_)
+            fallback[list(self._label_encoder.classes_).index("UNKNOWN")] = 1.0
+            probs = np.array(fallback)
 
         # Map classes to their probabilities
         classes = self._label_encoder.classes_
         class_probs = {str(classes[i]).lower(): float(probs[i]) for i in range(len(classes))}
 
         # Get highest probability prediction
-        best_idx = probs.argmax()
+        best_idx = int(probs.argmax())
         best_class = str(classes[best_idx]).lower()  # Normalize to lowercase
         best_prob = float(probs[best_idx])
 

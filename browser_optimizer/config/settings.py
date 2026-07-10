@@ -23,6 +23,9 @@ class Settings:
     BROWSER_TIMEOUT = int(os.getenv("BROWSER_TIMEOUT", "30000"))
     SIMILARITY_THRESHOLD = float(os.getenv("SIMILARITY_THRESHOLD", "0.9"))
     CLASSIFICATION_THRESHOLD = float(os.getenv("CLASSIFICATION_THRESHOLD", "0.65"))
+    WEBSOCKET_HOST = os.getenv("WEBSOCKET_HOST", "localhost")
+    WEBSOCKET_PORT = int(os.getenv("WEBSOCKET_PORT", "8765"))
+    DASHBOARD_PORT = int(os.getenv("DASHBOARD_PORT", "8050"))
 
 
 # Instantiated settings for export

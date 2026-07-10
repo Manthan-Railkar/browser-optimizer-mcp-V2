@@ -4,6 +4,7 @@ import json
 import websockets
 from typing import Dict, Any
 
+from browser_optimizer.config.settings import settings
 from browser_optimizer.browser.manager import manager
 from browser_optimizer.server.main import (
     startup,
@@ -66,6 +67,7 @@ async def setup_websocket_server(monkeypatch):
         }
 
     monkeypatch.setattr("browser_optimizer.server.main.page_diff", mock_page_diff)
+    monkeypatch.setattr(settings, "WEBSOCKET_PORT", 8766)
 
     # Clear cache
     from browser_optimizer.cache.cache import semantic_cache
@@ -83,7 +85,7 @@ async def setup_websocket_server(monkeypatch):
 @pytest.mark.anyio
 async def test_websocket_registration():
     """Verify that clients can connect to the websocket server and register for a session."""
-    uri = "ws://localhost:8765"
+    uri = f"ws://{settings.WEBSOCKET_HOST}:{settings.WEBSOCKET_PORT}"
     async with websockets.connect(uri) as ws:
         # Register for custom session 'sessionX'
         reg_payload = {"action": "register", "session_id": "sessionX"}
@@ -100,7 +102,7 @@ async def test_websocket_registration():
 @pytest.mark.anyio
 async def test_watch_page_push_updates():
     """Verify that watch_page periodic evaluation pushes visual updates to registered websocket clients."""
-    uri = "ws://localhost:8765"
+    uri = f"ws://{settings.WEBSOCKET_HOST}:{settings.WEBSOCKET_PORT}"
     async with websockets.connect(uri) as ws:
         # Register for 'default' session
         await ws.send(json.dumps({"action": "register", "session_id": "default"}))
@@ -131,7 +133,7 @@ async def test_watch_page_push_updates():
 @pytest.mark.anyio
 async def test_session_isolated_pushes():
     """Verify that websocket pushes are strictly isolated by session ID."""
-    uri = "ws://localhost:8765"
+    uri = f"ws://{settings.WEBSOCKET_HOST}:{settings.WEBSOCKET_PORT}"
     
     # Client A connects and registers for sessionA
     async with websockets.connect(uri) as ws_a:

@@ -14,9 +14,12 @@ class SQLiteCache:
     """
     A dictionary-like interface over an SQLite database to act as a persistent TTL cache.
     """
+    _PURGE_INTERVAL = 60  # seconds between automatic purge sweeps during get() calls
+
     def __init__(self, db_path: str = "cache.db", ttl: int = 300):
         self.db_path = db_path
         self.ttl = ttl
+        self._last_purge: float = 0.0
         self._init_db()
         self.purge_expired()
 
@@ -47,15 +50,23 @@ class SQLiteCache:
 
     def get(self, key: str, default: Any = None) -> Optional[Any]:
         """
-        Retrieve an item from the cache. Purges expired items before lookup.
+        Retrieve an item from the cache. Purges expired items at most once per 60 seconds.
         Increments the hit count if the item is found.
         """
-        self.purge_expired()
+        now = time.time()
+        if now - self._last_purge >= self._PURGE_INTERVAL:
+            self.purge_expired()
+            self._last_purge = now
         with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute("SELECT value, hit_count, confidence FROM cache WHERE key = ?", (key,))
+            cursor = conn.execute(
+                "SELECT value, hit_count, confidence, created_at, ttl FROM cache WHERE key = ?", (key,)
+            )
             row = cursor.fetchone()
             if row:
-                value_str, hit_count, confidence = row
+                value_str, hit_count, confidence, created_at, row_ttl = row
+                # Per-row TTL check: honour expiry even if bulk purge hasn't run yet
+                if time.time() > created_at + row_ttl:
+                    return default
                 # Increment hit_count
                 conn.execute("UPDATE cache SET hit_count = ? WHERE key = ?", (hit_count + 1, key))
                 conn.commit()
@@ -189,7 +200,9 @@ class MacroStore:
                 VALUES (?, ?, ?, 0.8, 0, 0)
             ''', (name, page_type, sequence_str))
             conn.commit()
-            return cursor.lastrowid
+            row_id = cursor.lastrowid
+            assert row_id is not None, "INSERT into macros failed to return a row ID"
+            return row_id
 
     def list_macros(self, page_type: Optional[str] = None) -> list:
         with sqlite3.connect(self.db_path) as conn:

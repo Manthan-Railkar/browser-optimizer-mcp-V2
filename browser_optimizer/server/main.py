@@ -95,9 +95,9 @@ async def startup():
     await manager.start()
     
     # Start WebSocket Server
-    logger.info("Starting WebSocket Server on port 8765...")
-    ws_server = await websockets.serve(websocket_handler, "localhost", 8765)
-    logger.info("WebSocket Server started on ws://localhost:8765")
+    logger.info(f"Starting WebSocket Server on {settings.WEBSOCKET_HOST}:{settings.WEBSOCKET_PORT}...")
+    ws_server = await websockets.serve(websocket_handler, settings.WEBSOCKET_HOST, settings.WEBSOCKET_PORT)
+    logger.info(f"WebSocket Server started on ws://{settings.WEBSOCKET_HOST}:{settings.WEBSOCKET_PORT}")
     logger.info("Server startup complete. Browser ready.")
 
 
@@ -146,6 +146,9 @@ async def extract_context(url: str, session_id: str = "default") -> Dict[str, An
 
         # Check cache (exact hash first, then semantic similarity fallback)
         cached_context = semantic_cache.lookup(url, html)
+
+        # Default confidence for cases where cache is not consulted
+        confidence: float = 0.8
 
         if cached_context:
             confidence = cached_context.get("confidence", 0.8)
@@ -875,7 +878,7 @@ async def watch_page(url: str, interval_seconds: int = 5, session_id: str = "def
     watch_tasks[session_id] = asyncio.create_task(poll_page_diff(url, float(interval_seconds), session_id))
     return {
         "success": True,
-        "message": f"Started watching {url} in session '{session_id}' every {interval_seconds}s. Connect to ws://localhost:8765 and register with session_id '{session_id}' to receive live diff updates."
+        "message": f"Started watching {url} in session '{session_id}' every {interval_seconds}s. Connect to ws://{settings.WEBSOCKET_HOST}:{settings.WEBSOCKET_PORT} and register with session_id '{session_id}' to receive live diff updates."
     }
 
 
@@ -924,6 +927,8 @@ async def mcp_get_tool_schema(tool_name: str) -> Dict[str, Any]:
     """
     try:
         tool_obj = mcp._tool_manager.get_tool(tool_name)
+        if tool_obj is None:
+            return {"success": False, "error": f"Tool '{tool_name}' not found."}
         return {
             "success": True,
             "tool_name": tool_name,
@@ -957,5 +962,4 @@ async def main():
 
 if __name__ == "__main__":
     logger.info("Starting the Browser Optimizer MCP Server...")
-    import asyncio
     asyncio.run(main())

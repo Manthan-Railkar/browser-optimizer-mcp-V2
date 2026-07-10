@@ -11,10 +11,11 @@ from pathlib import Path
 from browser_optimizer.metrics.metrics import metrics
 from browser_optimizer.cache.db import macro_store
 from browser_optimizer.utils.logger import logger
+from browser_optimizer.config.settings import settings
 
 
 DASHBOARD_DIR = Path(__file__).parent
-DASHBOARD_PORT = 8050
+DASHBOARD_PORT = settings.DASHBOARD_PORT
 
 
 class DashboardHandler(SimpleHTTPRequestHandler):

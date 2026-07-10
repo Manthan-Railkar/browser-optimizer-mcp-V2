@@ -22,7 +22,7 @@ class CompressedContext(BaseModel):
 
 class ClassificationResult(BaseModel):
     page_type: str
-    scores: Dict[str, int]
+    scores: Dict[str, float]
 
 class PageDiff(BaseModel):
     url: str
