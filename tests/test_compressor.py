@@ -23,8 +23,9 @@ def test_remove_empty():
     
     # Span is empty and has no kids, should be decomposed
     assert cleaned.find("span") is None
-    assert cleaned.find("p") is not None
-    assert cleaned.find("p").text == "Hello"
+    p_tag = cleaned.find("p")
+    assert p_tag is not None
+    assert p_tag.text == "Hello"
 
 def test_extract_ui(sample_login_html):
     soup = BeautifulSoup(sample_login_html, "lxml")
@@ -57,4 +58,6 @@ def test_compress(sample_login_html):
     assert "accessibility" in compressed or "ax_tree" in compressed
     assert compressed["url"] == "http://test.com"
     assert compressed["title"] == "Test Title"
-    assert compressed["compression_ratio"] > 0
+    ratio = compressed["compression_ratio"]
+    assert isinstance(ratio, (int, float))
+    assert ratio > 0

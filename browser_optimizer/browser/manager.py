@@ -3,7 +3,8 @@ Browser management module using Playwright.
 Handles launching, session contexts, page management, and teardown.
 """
 
-from playwright.async_api import async_playwright
+from typing import Dict, Optional, Tuple
+from playwright.async_api import async_playwright, Playwright, Browser, BrowserContext, Page
 from browser_optimizer.config.settings import settings
 from browser_optimizer.utils.logger import logger
 
@@ -14,9 +15,9 @@ class BrowserManager:
     mapped by session_id to support isolated concurrent execution.
     """
     def __init__(self):
-        self.playwright = None
-        self.browser = None
-        self.sessions = {}  # dict of session_id: (BrowserContext, Page)
+        self.playwright: Optional[Playwright] = None
+        self.browser: Optional[Browser] = None
+        self.sessions: Dict[str, Tuple[BrowserContext, Page]] = {}
 
     async def start(self):
         """
@@ -45,7 +46,7 @@ class BrowserManager:
         self.sessions.clear()
         logger.info("Chromium Stopped")
 
-    async def get_page(self, session_id: str = "default"):
+    async def get_page(self, session_id: str = "default") -> Page:
         """
         Retrieve the page context for the specified session_id.
         Creates a new context and page if none exists, or if the page has been closed.
@@ -54,6 +55,8 @@ class BrowserManager:
             Page: Isolated Playwright page object ready for automation.
         """
         if session_id not in self.sessions or self.sessions[session_id][1].is_closed():
+            if self.browser is None:
+                raise RuntimeError("Browser not started. Call start() first.")
             logger.info(f"Initializing new isolated BrowserContext for session: {session_id}")
             context = await self.browser.new_context()
             page = await context.new_page()

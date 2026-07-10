@@ -62,7 +62,7 @@ def clean_database_and_sessions(monkeypatch):
                     pass
             return DummyContext()
 
-    manager.browser = DummyBrowser()
+    setattr(manager, "browser", DummyBrowser())
 
     # Clean macros table
     import sqlite3
@@ -116,6 +116,7 @@ async def test_session_isolated_recording():
     
     # Verify saved macro contains only session A's step
     macro = macro_store.get_macro(res["macro_id"])
+    assert macro is not None
     assert len(macro["sequence"]) == 1
     assert macro["sequence"][0]["selector"] == "#btnA"
 

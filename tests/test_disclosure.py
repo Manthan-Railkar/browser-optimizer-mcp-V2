@@ -1,5 +1,6 @@
 import pytest
 import asyncio
+from typing import cast, Any, Dict, Tuple, List
 from browser_optimizer.server.main import mcp
 
 @pytest.fixture
@@ -26,7 +27,7 @@ async def test_exposed_tools_list():
 async def test_list_tools_meta_tool():
     """Verify that calling the list_tools meta-tool returns all actual optimization tools."""
     # Call list_tools meta-tool
-    res, extra = await mcp.call_tool("list_tools", {})
+    res, extra = cast(Tuple[List[Any], Dict[str, Any]], await mcp.call_tool("list_tools", {}))
     assert "result" in extra
     tools = extra["result"]["tools"]
     
@@ -45,7 +46,7 @@ async def test_list_tools_meta_tool():
 @pytest.mark.anyio
 async def test_get_tool_schema_tool():
     """Verify that get_tool_schema returns the correct parameters schema for a tool."""
-    res, extra = await mcp.call_tool("get_tool_schema", {"tool_name": "extract_context"})
+    res, extra = cast(Tuple[List[Any], Dict[str, Any]], await mcp.call_tool("get_tool_schema", {"tool_name": "extract_context"}))
     assert "result" in extra
     result = extra["result"]
     
@@ -77,13 +78,13 @@ async def test_unexposed_tool_execution():
         return DummyPage()
         
     original_get_page = manager.get_page
-    manager.get_page = mock_get_page
+    setattr(manager, "get_page", mock_get_page)
     
     try:
         # Call extract_context directly via call_tool
-        res, extra = await mcp.call_tool("extract_context", {"url": "https://example.com", "session_id": "test_exec"})
+        res, extra = cast(Tuple[List[Any], Dict[str, Any]], await mcp.call_tool("extract_context", {"url": "https://example.com", "session_id": "test_exec"}))
         assert "result" in extra
         assert extra["result"]["url"] == "https://example.com"
         assert extra["result"]["title"] == "Test Title"
     finally:
-        manager.get_page = original_get_page
+        setattr(manager, "get_page", original_get_page)

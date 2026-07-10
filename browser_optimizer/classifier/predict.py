@@ -80,7 +80,8 @@ class PageClassifierPredictor:
         """
         if threshold is None:
             # Safely fetch setting, fall back to 0.65 if not defined on settings yet
-            threshold = getattr(settings, "CLASSIFICATION_THRESHOLD", 0.65)
+            val = getattr(settings, "CLASSIFICATION_THRESHOLD", 0.65)
+            threshold = float(val) if val is not None else 0.65
 
         if self._model is None or self._label_encoder is None or self._feature_names is None:
             raise RuntimeError("Page classifier assets are not loaded. Call load_assets() first.")

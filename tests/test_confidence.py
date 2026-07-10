@@ -71,12 +71,14 @@ def test_page_cache_confidence_decay_and_routing():
     # 0.8 - 0.3 = 0.5 (verification range)
     semantic_cache.update_confidence(url, success=False)
     entry = semantic_cache._cache.get(url)
+    assert entry is not None
     assert abs(entry.get("confidence", 0.0) - 0.5) < 1e-5
 
     # 3. Decay again to drop below 0.3
     # 0.5 - 0.3 = 0.2 (low confidence range)
     semantic_cache.update_confidence(url, success=False)
     entry = semantic_cache._cache.get(url)
+    assert entry is not None
     assert abs(entry.get("confidence", 0.0) - 0.2) < 1e-5
 
     # 4. Lookup should now return None because confidence is < 0.3, bypassing cache
@@ -116,23 +118,27 @@ def test_macro_confidence_growth_and_decay():
     # 2. Update confidence on success: 0.8 + 0.05 = 0.85
     macro_store.update_confidence(macro_id, success=True)
     macro = macro_store.get_macro(macro_id)
+    assert macro is not None
     assert abs(macro.get("confidence", 0.0) - 0.85) < 1e-5
 
     # 3. Update confidence on failure: 0.85 - 0.3 = 0.55
     macro_store.update_confidence(macro_id, success=False)
     macro = macro_store.get_macro(macro_id)
+    assert macro is not None
     assert abs(macro.get("confidence", 0.0) - 0.55) < 1e-5
 
     # 4. Cap at 1.0 test
     for _ in range(10):
         macro_store.update_confidence(macro_id, success=True)
     macro = macro_store.get_macro(macro_id)
+    assert macro is not None
     assert macro.get("confidence") == 1.0
 
     # 5. Cap at 0.0 test
     for _ in range(5):
         macro_store.update_confidence(macro_id, success=False)
     macro = macro_store.get_macro(macro_id)
+    assert macro is not None
     assert macro.get("confidence") == 0.0
 
 
@@ -160,6 +166,7 @@ async def test_macro_gating_and_suspension_flow():
 
     # 3. Verify confidence dropped to 0.5 (0.8 - 0.3)
     macro = macro_store.get_macro(macro_id)
+    assert macro is not None
     assert abs(macro["confidence"] - 0.5) < 1e-5
 
     # 4. Resume skill. Since next_step_index == 2 is end of sequence, it should complete successfully
@@ -170,6 +177,7 @@ async def test_macro_gating_and_suspension_flow():
 
     # 5. Check confidence grew to 0.55 (0.5 + 0.05)
     macro = macro_store.get_macro(macro_id)
+    assert macro is not None
     assert abs(macro["confidence"] - 0.55) < 1e-5
 
     # 6. Force confidence below 0.3 to test gating

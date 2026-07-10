@@ -5,8 +5,30 @@ Extracts DOM, structural, accessibility, and keyword features from webpage conte
 
 import re
 from typing import Dict, Any, List
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 from browser_optimizer.utils.logger import logger
+
+def _get_str_attr(tag: Any, attr_name: str) -> str:
+    """Safely get a string attribute from a BeautifulSoup tag, handling list/tuple values and None."""
+    if not isinstance(tag, Tag):
+        return ""
+    val = tag.get(attr_name)
+    if val is None:
+        return ""
+    if isinstance(val, (list, tuple)):
+        return " ".join(val)
+    return val
+
+def _get_list_attr(tag: Any, attr_name: str) -> List[str]:
+    """Safely get a list of string attributes from a BeautifulSoup tag."""
+    if not isinstance(tag, Tag):
+        return []
+    val = tag.get(attr_name)
+    if val is None:
+        return []
+    if isinstance(val, (list, tuple)):
+        return list(val)
+    return [val]
 
 # Exact columns in the trained model
 FEATURE_COLUMNS = [
@@ -62,7 +84,7 @@ class FeatureExtractor:
         Returns:
             Dict[str, Any]: Feature names mapped to their numerical values.
         """
-        features = {}
+        features: Dict[str, Any] = {}
 
         # 1. Resolve soup if available
         soup = None
@@ -105,8 +127,8 @@ class FeatureExtractor:
             features["email_inputs"] = len(soup.find_all("input", type="email")) + len(
                 soup.find_all(
                     lambda t: t.name == "input"
-                    and t.get("type") != "password"
-                    and any(k in (t.get("id") or "").lower() or k in (t.get("name") or "").lower() or k in (t.get("placeholder") or "").lower() for k in ["email"])
+                    and _get_str_attr(t, "type") != "password"
+                    and any(k in _get_str_attr(t, "id").lower() or k in _get_str_attr(t, "name").lower() or k in _get_str_attr(t, "placeholder").lower() for k in ["email"])
                 )
             )
             features["checkbox_count"] = len(soup.find_all("input", type="checkbox"))
@@ -162,7 +184,7 @@ class FeatureExtractor:
                     search_box = 1
                     break
         if search_box == 0 and soup is not None:
-            if soup.find("input", type="search") or soup.find(lambda t: t.name == "input" and any(k in (t.get("id") or "").lower() or k in (t.get("name") or "").lower() or k in (t.get("placeholder") or "").lower() for k in ["search", "query"])):
+            if soup.find("input", type="search") or soup.find(lambda t: t.name == "input" and any(k in _get_str_attr(t, "id").lower() or k in _get_str_attr(t, "name").lower() or k in _get_str_attr(t, "placeholder").lower() for k in ["search", "query"])):
                 search_box = 1
         features["search_box_present"] = search_box
 
@@ -174,13 +196,13 @@ class FeatureExtractor:
         features["modal_present"] = 0
 
         if soup is not None:
-            if soup.find("nav") or soup.find(lambda t: any(k in (t.get("id") or "").lower() or any(k in c.lower() for c in t.get("class", [])) for k in ["nav", "navbar", "header"])):
+            if soup.find("nav") or soup.find(lambda t: any(k in _get_str_attr(t, "id").lower() or any(k in c.lower() for c in _get_list_attr(t, "class")) for k in ["nav", "navbar", "header"])):
                 features["navbar_present"] = 1
-            if soup.find("footer") or soup.find(lambda t: any(k in (t.get("id") or "").lower() or any(k in c.lower() for c in t.get("class", [])) for k in ["footer"])):
+            if soup.find("footer") or soup.find(lambda t: any(k in _get_str_attr(t, "id").lower() or any(k in c.lower() for c in _get_list_attr(t, "class")) for k in ["footer"])):
                 features["footer_present"] = 1
-            if soup.find("aside") or soup.find(lambda t: any(k in (t.get("id") or "").lower() or any(k in c.lower() for c in t.get("class", [])) for k in ["sidebar", "side-bar"])):
+            if soup.find("aside") or soup.find(lambda t: any(k in _get_str_attr(t, "id").lower() or any(k in c.lower() for c in _get_list_attr(t, "class")) for k in ["sidebar", "side-bar"])):
                 features["sidebar_present"] = 1
-            if soup.find(lambda t: any(k in (t.get("id") or "").lower() or any(k in c.lower() for c in t.get("class", [])) for k in ["modal", "dialog", "popup"])):
+            if soup.find(lambda t: any(k in _get_str_attr(t, "id").lower() or any(k in c.lower() for c in _get_list_attr(t, "class")) for k in ["modal", "dialog", "popup"])):
                 features["modal_present"] = 1
         else:
             # Check AX Tree and URL/Text keywords
@@ -211,8 +233,9 @@ class FeatureExtractor:
         if soup is not None:
             form_sizes = []
             for form in soup.find_all("form"):
-                inputs_in_form = len(form.find_all(["input", "select", "textarea", "button"]))
-                form_sizes.append(inputs_in_form)
+                if isinstance(form, Tag):
+                    inputs_in_form = len(form.find_all(["input", "select", "textarea", "button"]))
+                    form_sizes.append(inputs_in_form)
             if form_sizes:
                 features["avg_form_size"] = sum(form_sizes) / len(form_sizes)
                 features["max_form_size"] = max(form_sizes)
@@ -233,7 +256,7 @@ class FeatureExtractor:
         if soup is not None:
             submit_buttons = len(soup.find_all("button", type="submit")) + len(soup.find_all("input", type="submit"))
             if submit_buttons == 0:
-                submit_buttons = len(soup.find_all(lambda t: t.name in ("button", "input") and any(k in (t.get("id") or "").lower() or k in (t.get("name") or "").lower() or k in t.get_text().lower() for k in ["submit"])))
+                submit_buttons = len(soup.find_all(lambda t: t.name in ("button", "input") and any(k in _get_str_attr(t, "id").lower() or k in _get_str_attr(t, "name").lower() or k in t.get_text().lower() for k in ["submit"])))
         else:
             submit_buttons = sum(
                 1 for el in ui_elements
@@ -281,6 +304,6 @@ class FeatureExtractor:
             if col == "avg_form_size":
                 sorted_features[col] = float(val)
             else:
-                sorted_features[col] = int(val)
+                sorted_features[col] = val
 
         return sorted_features

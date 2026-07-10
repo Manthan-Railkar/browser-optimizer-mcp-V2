@@ -162,9 +162,13 @@ def train_classifier():
         logger.info(f"  {row['Feature']}: {row['Importance']}")
 
     # Prediction Confidence (mean confidence for correct and incorrect predictions)
-    correct_mask = (y_test == y_pred)
-    correct_confidences = y_pred_proba[np.arange(len(y_test)), y_pred][correct_mask]
-    incorrect_confidences = y_pred_proba[np.arange(len(y_test)), y_pred][~correct_mask]
+    y_test_arr = np.asarray(y_test)
+    y_pred_arr = np.asarray(y_pred)
+    y_pred_proba_arr = np.asarray(y_pred_proba)
+
+    correct_mask = (y_test_arr == y_pred_arr)
+    correct_confidences = y_pred_proba_arr[np.arange(len(y_test_arr)), y_pred_arr][correct_mask]
+    incorrect_confidences = y_pred_proba_arr[np.arange(len(y_test_arr)), y_pred_arr][~correct_mask]
 
     logger.info(f"Mean confidence for CORRECT predictions: {correct_confidences.mean():.4f}")
     if len(incorrect_confidences) > 0:
