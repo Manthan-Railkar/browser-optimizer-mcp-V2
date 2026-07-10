@@ -26,6 +26,7 @@ class Settings:
     WEBSOCKET_HOST = os.getenv("WEBSOCKET_HOST", "localhost")
     WEBSOCKET_PORT = int(os.getenv("WEBSOCKET_PORT", "8765"))
     DASHBOARD_PORT = int(os.getenv("DASHBOARD_PORT", "8050"))
+    AUTO_OPEN_DASHBOARD = os.getenv("AUTO_OPEN_DASHBOARD", "True") == "True"
 
 
 # Instantiated settings for export

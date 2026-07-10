@@ -6,6 +6,7 @@ Runs on port 8050 alongside the MCP stdio server.
 
 import json
 import threading
+import webbrowser
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 from browser_optimizer.metrics.metrics import metrics
@@ -120,6 +121,16 @@ def start_dashboard_server():
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         logger.info(f"Dashboard server started at http://localhost:{DASHBOARD_PORT}")
+
+        if settings.AUTO_OPEN_DASHBOARD:
+            try:
+                # Open the dashboard URL in the default web browser
+                url = f"http://localhost:{DASHBOARD_PORT}"
+                logger.info(f"Automatically opening dashboard at {url}")
+                webbrowser.open(url)
+            except Exception as e:
+                logger.warning(f"Could not automatically open dashboard in web browser: {e}")
+
         return server
     except OSError as e:
         logger.warning(f"Could not start dashboard server on port {DASHBOARD_PORT}: {e}")
